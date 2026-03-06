@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+env/
+venv/
+
+# Environment Variables
+.env
+.env.local
+.env.production
+.env.development.local
+
+# Build Outputs
+.next/
+dist/
+build/
+*.log
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# DB
+prisma/*.sqlite
+prisma/*.sqlite-journal
