@@ -10,60 +10,51 @@
 [![Tech: Python](https://img.shields.io/badge/Engine-Python%203.9-blue)](https://www.python.org/)
 [![Tech: Claude](https://img.shields.io/badge/AI-Claude%203.5-orange)](https://anthropic.com/)
 
-[**Explore the Docs**](./DEPLOYMENT.md) | [**View PRD**](./ShadowTest-PRD.md) | [**Request Demo**](mailto:harshsahay2709@gmail.com)
+[**Business Case**](./BUSINESS_CASE.md) | [**Checklists**](./CHECKLISTS.md) | [**Explore the Docs**](./DEPLOYMENT.md) | [**View PRD**](./ShadowTest-PRD.md)
 
 ---
 
-## 🚀 The Vision
+## ❓ The Problem & Solution
 
-Traditional testing (Unit, Integration, E2E) validates **code**. ShadowTest validates **behavior**. 
+### **The Problem**
+- **Manual QA is slow:** Testing every path manually takes weeks.
+- **E2E Scripts are brittle:** Standard tests (Cypress/Selenium) break on minor CSS changes.
+- **Behavior is invisible:** You know *where* users drop off, but not *why* they were confused.
 
-ShadowTest leverages high-reasoning LLMs to simulate synthetic personas—ranging from technical experts to novice users—who navigate your product autonomously. By observing their reasoning traces, ShadowTest identifies confusing UI, broken flows, and edge cases that standard automated scripts simply cannot catch.
-
----
-
-## 🏗️ System Architecture
-
-ShadowTest is engineered as a scalable, microservices-driven monorepo.
-
-| Component | Documentation | Technology | Role |
-| :--- | :--- | :--- | :--- |
-| **Frontend** | [web/README.md](./web/README.md) | **Next.js 16**, Tailwind, Clerk | High-performance dashboard & live monitoring. |
-| **Core API** | [api/README.md](./api/README.md) | **Node.js**, Express, Prisma | Orchestration, state management, and persistency. |
-| **AI Engine** | [ai-engine/README.md](./ai-engine/README.md) | **Python**, FastAPI, Claude 3.5 | High-reasoning behavioral simulation & scraping. |
+### **The Solution: ShadowTest**
+ShadowTest simulates **High-Reasoning Synthetic Personas** that think, navigate, and get confused like real humans. 
+- **Saves Time:** Run 100 autonomous user sessions in 10 minutes.
+- **Saves Money:** Reduce developer hours by 70% and slash customer churn by identifying UX friction before launch.
 
 ---
 
-## 📁 Repository Structure
+## 🏗️ Software Architecture
 
-```text
-/apps
-├── ai-engine/    # Cognitive reasoning & autonomous browsing logic
-├── api/          # Secure RESTful API & database orchestration
-├── web/          # Modern enterprise dashboard & live trace UI
-├── render.yaml   # Infrastructure-as-code for Render deployment
-└── README.md     # Project overview & documentation
+ShadowTest uses a distributed microservices model to handle long-running AI reasoning loops separately from the user dashboard.
+
+```mermaid
+graph TD
+    A[Client Browser] -->|Auth| B(Next.js Dashboard)
+    B -->|API Calls| C(Node.js Gateway)
+    C -->|Store State| D[(Vercel Postgres)]
+    C -->|Trigger Sim| E(AI Engine - Python)
+    E -->|Reasoning| F{Anthropic Claude 3.5}
+    E -->|Scrape/Action| G[Target Website]
+    G -->|Context| E
+    E -->|Live Traces| C
+    C -->|WebSockets| B
 ```
+
+### **System Components**
+| Component | Technology | Role |
+| :--- | :--- | :--- |
+| **Frontend** | **Next.js 16**, Tailwind, Clerk | High-performance dashboard & live monitoring. |
+| **Core API** | **Node.js**, Express, Prisma | Orchestration, state management, and persistency. |
+| **AI Engine** | **Python**, FastAPI, Claude 3.5 | High-reasoning behavioral simulation & autonomous browsing. |
 
 ---
 
 ## 🏁 Getting Started
-
-ShadowTest requires a coordinated launch of all three services.
-
-1.  **AI Engine**:
-    ```bash
-    cd ai-engine && pip install -r requirements.txt && python main.py
-    ```
-2.  **API Gateway**:
-    ```bash
-    cd api && npm install && npx prisma db push && npm run dev
-    ```
-3.  **Frontend**:
-    ```bash
-    cd web && npm install && npm run dev
-    ```
-
 Refer to the **[Production Deployment Guide](./DEPLOYMENT.md)** for Vercel and Render instructions.
 
 ---
