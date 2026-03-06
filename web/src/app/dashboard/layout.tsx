@@ -1,8 +1,7 @@
 import Link from "next/link";
-import { Zap, LayoutDashboard, Users, Activity, FileText, Settings, LogOut, Search } from "lucide-react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Zap, LayoutDashboard, Users, Activity, FileText, Settings, Search } from "lucide-react";
+import { UserButton } from "@clerk/nextjs";
 import { Input } from "@/components/ui/input";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     return (
@@ -67,27 +66,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             />
                         </div>
                         <div className="ml-auto flex items-center gap-4">
-                            <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <button className="rounded-full outline-ring/50">
-                                        <Avatar className="h-9 w-9 border border-border">
-                                            <AvatarImage src="" alt="User" />
-                                            <AvatarFallback>TU</AvatarFallback>
-                                        </Avatar>
-                                    </button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem>Settings</DropdownMenuItem>
-                                    <DropdownMenuItem>Support</DropdownMenuItem>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem>
-                                        <LogOut className="mr-2 h-4 w-4" />
-                                        Log out
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
+                            <UserButton />
                         </div>
                     </header>
 
