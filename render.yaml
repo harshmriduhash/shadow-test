@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: shadowtest-api
+    env: node
+    buildCommand: "cd apps/api && npm install && npx prisma generate && npm run build"
+    startCommand: "cd apps/api && npm start"
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+  - type: web
+    name: shadowtest-ai-engine
+    env: docker
+    dockerfilePath: apps/ai-engine/Dockerfile
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false

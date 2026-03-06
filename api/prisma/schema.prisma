@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_PRISMA_URL") // uses connection pooling
+  directUrl = env("POSTGRES_URL_NON_POOLING") // uses a direct connection
+}
+
+model User {
+  id        String    @id // Use Clerk ID directly
+  email     String    @unique
+  createdAt DateTime  @default(now())
+  
+  projects  Project[]
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  repoUrl     String?  @map("repo_url")
+  productUrl  String?  @map("product_url")
+  createdAt   DateTime @default(now())
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  personas    Persona[]
+  simulations Simulation[]
+}
+
+model Persona {
+  id            String   @id @default(cuid())
+  projectId     String
+  name          String
+  traits        String   // Can store JSON string
+  behaviorModel String   @map("behavior_model")
+  createdAt     DateTime @default(now())
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  simulations Simulation[]
+}
+
+model Simulation {
+  id        String   @id @default(cuid())
+  projectId String
+  personaId String
+  task      String
+  status    String   @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
+  createdAt DateTime @default(now())
+
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  persona   Persona   @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  steps     SimulationStep[]
+  reports   Report[]
+}
+
+model SimulationStep {
+  id             String   @id @default(cuid())
+  simulationId   String
+  stepNumber     Int      @map("step_number")
+  observation    String?
+  interpretation String?
+  decision       String?
+  action         String?
+  outcome        String?
+  createdAt      DateTime @default(now())
+
+  simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+}
+
+model Report {
+  id           String   @id @default(cuid())
+  simulationId String
+  summary      String?
+  insights     String?  // Can store JSON string
+  createdAt    DateTime @default(now())
+
+  simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+}

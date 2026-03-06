@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+anthropic
+qdrant-client
+python-dotenv
+httpx
+beautifulsoup4
