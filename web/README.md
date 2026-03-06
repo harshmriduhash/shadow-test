@@ -31,6 +31,4 @@ The high-performance monitoring dashboard for ShadowTest simulations. Built with
     npm run dev
     ```
 
----
-
-*Part of the [ShadowTest](./../README.md) Infrastructure*
+**Part of the [ShadowTest](./../README.md) Infrastructure**
