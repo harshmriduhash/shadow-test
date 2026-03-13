@@ -70,7 +70,7 @@ export default function FeaturesPage() {
                             <Target className="h-10 w-10 text-zinc-500 mb-6" />
                             <div>
                                 <h3 className="text-xl font-bold text-white mb-2">Goal-Oriented Logic</h3>
-                                <p className="text-zinc-500 text-sm font-light">Defined tasks are processed through cognitive loops: Observe > Interpret > Act.</p>
+                                <p className="text-zinc-500 text-sm font-light">Defined tasks are processed through cognitive loops: Observe &gt; Interpret &gt; Act.</p>
                             </div>
                         </motion.div>
 

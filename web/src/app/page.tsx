@@ -29,10 +29,10 @@ export default function LandingPage() {
           </span>
         </Link>
         <nav className="ml-auto flex gap-8 items-center">
-          <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="#features">
+          <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="/features">
             Features
           </Link>
-          <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="#pricing">
+          <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="/pricing">
             Pricing
           </Link>
           <div className="h-4 w-[1px] bg-white/10" />
