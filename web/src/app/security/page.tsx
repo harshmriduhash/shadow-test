@@ -1,59 +1,109 @@
-import { Metadata } from "next";
+"use client";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Zap, ShieldCheck, Lock, UploadCloud } from "lucide-react";
-
-export const metadata: Metadata = {
-    title: "Security - ShadowTest",
-    description: "Enterprise-grade security measures. Discover how we protect your product's code, URLs, and simulation data.",
-};
+import { ShieldCheck, Lock, UploadCloud, Cpu, Sparkles, Server } from "lucide-react";
+import { motion } from "framer-motion";
 
 export default function SecurityPage() {
     return (
-        <div className="flex flex-col min-h-screen">
-            <header className="px-6 h-16 flex items-center border-b border-border/40 bg-background/95 backdrop-blur">
-                <Link className="flex items-center gap-2 font-bold text-lg" href="/">
-                    <img src="/logo.png" alt="ShadowTest Logo" className="h-8 w-8 rounded-md" />
-                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">ShadowTest</span>
+        <div className="flex flex-col min-h-screen bg-[#020202] text-zinc-100">
+            {/* Nav */}
+            <header className="fixed top-0 w-full z-50 px-6 h-16 flex items-center border-b border-white/[0.05] bg-black/50 backdrop-blur-xl">
+                <Link className="flex items-center justify-center font-bold text-lg gap-2 group" href="/">
+                    <div className="h-8 w-8 rounded bg-primary/10 border border-primary/20 flex items-center justify-center group-hover:border-primary/50 transition-colors">
+                        <Cpu className="h-5 w-5 text-primary" />
+                    </div>
+                    <span className="tracking-tighter text-xl text-white">
+                        Shadow<span className="text-primary">Test</span>
+                    </span>
                 </Link>
-                <nav className="ml-auto flex gap-6 items-center">
-                    <Link className="text-sm font-medium hover:text-primary" href="/features">Features</Link>
-                    <Link className="text-sm font-medium hover:text-primary" href="/pricing">Pricing</Link>
+                <nav className="ml-auto flex gap-8 items-center">
+                    <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="/features">Features</Link>
+                    <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="/pricing">Pricing</Link>
                     <Link className="text-sm font-medium text-primary" href="/security">Security</Link>
-                    <Link href="/signup"><Button size="sm">Get Started</Button></Link>
+                    <Link href="/signup">
+                        <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-6 shadow-[0_0_20px_rgba(16,185,129,0.2)]">Launch</Button>
+                    </Link>
                 </nav>
             </header>
 
-            <main className="flex-1 py-20">
-                <div className="container px-4 md:px-6 max-w-4xl mx-auto">
-                    <div className="mb-16 text-center">
-                        <ShieldCheck className="h-16 w-16 text-accent mx-auto mb-6" />
-                        <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl mb-6">Security & Compliance</h1>
-                        <p className="text-xl text-muted-foreground">We understand the sensitivity of handling your unreleased product links and GitHub repositories. ShadowTest ensures enterprise-level protections.</p>
+            <main className="flex-1 pt-32 pb-20">
+                <div className="container px-4 md:px-6 max-w-5xl mx-auto">
+                    <div className="text-center mb-24 space-y-4">
+                        <motion.div 
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/5 border border-primary/10 text-[10px] font-mono text-primary uppercase tracking-[0.2em]"
+                        >
+                            <ShieldCheck className="h-3 w-3" />
+                            Vault Protocol v4.0
+                        </motion.div>
+                        <h1 className="text-5xl md:text-6xl font-bold tracking-tighter text-white">Infrastructure Integrity.</h1>
+                        <p className="text-xl text-zinc-500 max-w-2xl mx-auto font-light leading-relaxed">
+                            ShadowTest prioritizes the sanitization and protection of your proprietary application logic and behavioral datasets.
+                        </p>
                     </div>
 
-                    <div className="grid md:grid-cols-2 gap-8 mt-12">
-                        <div className="bg-card p-8 rounded-xl border border-border/50">
-                            <Lock className="h-8 w-8 text-primary mb-4" />
-                            <h3 className="text-2xl font-bold mb-2">Secure Authentication</h3>
-                            <p className="text-muted-foreground">We use industry-standard JSON Web Tokens (JWT) with 15-minute expiration logic and 7-day revolving refresh tokens. Auth infrastructure is fully backed by NextAuth ensuring proper OAuth 2.0 specs.</p>
-                        </div>
-                        <div className="bg-card p-8 rounded-xl border border-border/50">
-                            <UploadCloud className="h-8 w-8 text-secondary mb-4" />
-                            <h3 className="text-2xl font-bold mb-2">Data Isolation</h3>
-                            <p className="text-muted-foreground">Simulation reports and reasoning traces are siloed per user in our PostgreSQL clusters. Private GitHub repository ingestion is strictly ephemeral during simulation runs and destroyed post-run.</p>
-                        </div>
+                    <div className="grid md:grid-cols-2 gap-8">
+                        {[
+                            {
+                                icon: Lock,
+                                title: "Authentication Shielding",
+                                desc: "Advanced JWT rotation with ephemeral session logic. Integrated with Clerk's secure identity layer for biometric and MFA support.",
+                                color: "text-primary"
+                            },
+                            {
+                                icon: Server,
+                                title: "Data Siloing",
+                                desc: "Reports and behavioral traces are encrypted at rest using AES-256 and siloed per project node in isolated compute clusters.",
+                                color: "text-zinc-500"
+                            },
+                            {
+                                icon: UploadCloud,
+                                title: "Ephemeral Ingestion",
+                                desc: "Repository and URL analysis is processed in-memory. No permanent storage of source code or proprietary DOM snapshots.",
+                                color: "text-zinc-500"
+                            },
+                            {
+                                icon: Sparkles,
+                                title: "Neural Privacy",
+                                desc: "LLM training is strictly inhibited. Your interaction data is never used to improve global models, ensuring logic exclusivity.",
+                                color: "text-primary"
+                            }
+                        ].map((item, i) => (
+                            <motion.div
+                                key={item.title}
+                                initial={{ opacity: 0, x: i % 2 === 0 ? -20 : 20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: i * 0.1 }}
+                                className="bg-zinc-900/20 border border-white/[0.05] p-8 rounded-[2.5rem] backdrop-blur-sm group hover:border-primary/20 transition-all"
+                            >
+                                <item.icon className={`h-10 w-10 ${item.color} mb-6 opacity-80 group-hover:scale-110 transition-transform`} />
+                                <h3 className="text-xl font-bold text-white mb-3 tracking-tight">{item.title}</h3>
+                                <p className="text-zinc-500 text-sm font-light leading-relaxed">{item.desc}</p>
+                            </motion.div>
+                        ))}
                     </div>
 
-                    <div className="mt-16 bg-muted/20 p-8 rounded-xl border border-border/30 text-center">
-                        <h3 className="text-xl font-bold mb-4">Want to talk compliance?</h3>
-                        <p className="text-muted-foreground mb-6">If your Enterprise requires SOC2 reporting or DPA agreements, we accommodate dedicated requests for Pro and higher tiers.</p>
-                        <Link href="/contact"><Button>Contact Security Team</Button></Link>
-                    </div>
+                    <motion.div 
+                        initial={{ opacity: 0, y: 30 }}
+                        whileInView={{ opacity: 1, y: 0 }}
+                        viewport={{ once: true }}
+                        className="mt-24 p-12 rounded-[3rem] border border-primary/20 bg-primary/[0.02] text-center"
+                    >
+                        <h3 className="text-2xl font-bold text-white mb-2 italic tracking-tighter">Enterprise Standard Compliance</h3>
+                        <p className="text-zinc-500 font-light mb-8 max-w-xl mx-auto">Requires DPA or SOC2 documentation? Our security team provides full compliance disclosure for Cluster-tier partners.</p>
+                        <Link href="/contact">
+                            <Button className="bg-primary text-primary-foreground rounded-2xl px-10 h-14 shadow-xl shadow-primary/10 font-bold">Request Security Brief</Button>
+                        </Link>
+                    </motion.div>
                 </div>
             </main>
-            <footer className="w-full py-6 flex justify-center border-t border-border/40 bg-background text-xs text-muted-foreground">
-                © 2026 ShadowTest Inc. All rights reserved.
+
+            <footer className="w-full py-12 border-t border-white/[0.05] bg-black/50">
+                <div className="container px-4 text-center">
+                    <p className="text-[10px] font-mono text-zinc-600 uppercase tracking-[0.4em]">© 2026 ShadowTest // Cryptographic Ops Layer</p>
+                </div>
             </footer>
         </div>
     );
