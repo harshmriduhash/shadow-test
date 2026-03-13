@@ -5,8 +5,10 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderGit2, Activity, Loader2 } from "lucide-react";
+import { Plus, FolderGit2, Activity, Cpu, ArrowUpRight } from "lucide-react";
 import { api } from "@/lib/api";
+import { Skeleton } from "@/components/ui/skeleton";
+import { motion } from "framer-motion";
 
 export default function DashboardPage() {
     const { userId } = useAuth();
@@ -21,61 +23,87 @@ export default function DashboardPage() {
     }, [userId]);
 
     return (
-        <div className="flex flex-col gap-8">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
-                    <p className="text-muted-foreground mt-1">Manage your applications and run behavior simulations.</p>
+        <div className="flex flex-col gap-10">
+            <div className="flex items-end justify-between">
+                <div className="space-y-1">
+                    <h1 className="text-4xl font-bold tracking-tighter text-white">Infrastructure</h1>
+                    <p className="text-zinc-500 font-mono text-xs uppercase tracking-widest">Active Neural Projects / Global Scope</p>
                 </div>
                 <Link href="/dashboard/projects/new">
-                    <Button>
+                    <Button className="bg-primary text-primary-foreground shadow-[0_0_20px_rgba(16,185,129,0.2)] hover:shadow-[0_0_30px_rgba(16,185,129,0.4)] transition-all rounded-xl h-12 px-6">
                         <Plus className="mr-2 h-4 w-4" />
-                        Create Project
+                        New Simulation
                     </Button>
                 </Link>
             </div>
 
             {loading ? (
-                <div className="flex flex-col items-center justify-center min-h-[300px] text-muted-foreground">
-                    <Loader2 className="h-8 w-8 animate-spin mb-4" />
-                    <p>Loading projects...</p>
+                <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                    {[1, 2, 3].map((i) => (
+                        <div key={i} className="h-[240px] rounded-3xl border border-white/[0.05] bg-zinc-900/20 p-6 space-y-4">
+                            <Skeleton className="h-6 w-1/3" />
+                            <Skeleton className="h-4 w-full" />
+                            <Skeleton className="h-4 w-2/3" />
+                            <div className="pt-8">
+                                <Skeleton className="h-10 w-full rounded-xl" />
+                            </div>
+                        </div>
+                    ))}
                 </div>
             ) : (
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
                     {/* Create New Card */}
-                    <Card className="flex flex-col justify-center border-dashed border-2 hover:border-primary/50 hover:bg-muted/50 transition-colors cursor-pointer min-h-[220px]">
-                        <Link href="/dashboard/projects/new" className="h-full flex flex-col items-center justify-center p-6 text-center">
-                            <div className="bg-primary/10 p-3 rounded-full mb-4">
+                    <motion.div 
+                        whileHover={{ scale: 1.02 }}
+                        className="group flex flex-col justify-center border-dashed border border-white/[0.1] bg-white/[0.02] hover:bg-white/[0.04] hover:border-primary/50 transition-all cursor-pointer min-h-[240px] rounded-3xl"
+                    >
+                        <Link href="/dashboard/projects/new" className="h-full flex flex-col items-center justify-center p-8 text-center">
+                            <div className="bg-primary/10 p-4 rounded-2xl mb-4 group-hover:bg-primary/20 transition-colors">
                                 <Plus className="h-6 w-6 text-primary" />
                             </div>
-                            <h3 className="text-lg font-semibold">New Project</h3>
-                            <p className="text-sm text-muted-foreground mt-1">Setup a new application to test.</p>
+                            <h3 className="text-lg font-semibold text-white">Initialize Project</h3>
+                            <p className="text-xs text-zinc-500 mt-2 font-mono uppercase tracking-wider">Start New Compute Instance</p>
                         </Link>
-                    </Card>
+                    </motion.div>
 
-                    {projects.map((project) => (
-                        <Card key={project.id} className="flex flex-col min-h-[220px]">
-                            <CardHeader>
-                                <div className="flex items-center justify-between">
-                                    <CardTitle className="text-xl">{project.name}</CardTitle>
-                                    <FolderGit2 className="h-5 w-5 text-muted-foreground" />
-                                </div>
-                                <CardDescription className="line-clamp-2">
-                                    {project.description || "No description provided."}
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="flex-1">
-                                <div className="flex items-center gap-2 text-sm text-muted-foreground mt-2">
-                                    <Activity className="h-4 w-4 text-accent" />
-                                    <span>{project._count?.simulations || 0} simulations completed</span>
-                                </div>
-                            </CardContent>
-                            <CardFooter className="pt-4 border-t border-border/50">
-                                <Link href={`/dashboard/projects/${project.id}`} className="w-full">
-                                    <Button variant="outline" className="w-full">View Details</Button>
-                                </Link>
-                            </CardFooter>
-                        </Card>
+                    {projects.map((project, index) => (
+                        <motion.div
+                            key={project.id}
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: index * 0.1 }}
+                        >
+                            <Card className="flex flex-col min-h-[240px] rounded-3xl border-white/[0.05] bg-zinc-900/30 hover:bg-zinc-900/50 hover:border-white/[0.1] transition-all group overflow-hidden">
+                                <CardHeader className="pb-4">
+                                    <div className="flex items-start justify-between">
+                                        <div className="space-y-1">
+                                            <CardTitle className="text-xl text-white tracking-tight">{project.name}</CardTitle>
+                                            <p className="text-[10px] font-mono text-primary uppercase tracking-[0.2em]">Active</p>
+                                        </div>
+                                        <div className="h-10 w-10 rounded-xl bg-white/[0.03] border border-white/[0.05] flex items-center justify-center group-hover:border-primary/30 transition-colors">
+                                            <Cpu className="h-5 w-5 text-zinc-500 group-hover:text-primary transition-colors" />
+                                        </div>
+                                    </div>
+                                    <CardDescription className="line-clamp-2 text-zinc-400 text-sm mt-2 font-light leading-relaxed">
+                                        {project.description || "Synthesizing behavioral patterns for this node."}
+                                    </CardDescription>
+                                </CardHeader>
+                                <CardContent className="flex-1">
+                                    <div className="flex items-center gap-3 text-xs text-zinc-500 font-mono uppercase tracking-tighter">
+                                        <div className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_5px_rgba(16,185,129,0.5)]" />
+                                        <span>{project._count?.simulations || 0} Simulations Recorded</span>
+                                    </div>
+                                </CardContent>
+                                <CardFooter className="pt-4 border-t border-white/[0.05]">
+                                    <Link href={`/dashboard/projects/${project.id}`} className="w-full">
+                                        <Button variant="ghost" className="w-full group/btn text-zinc-300 hover:text-white hover:bg-white/[0.05] rounded-xl flex items-center justify-between px-4 h-10">
+                                            <span>Access Node</span>
+                                            <ArrowUpRight className="h-4 w-4 opacity-0 group-hover/btn:opacity-100 transition-all -translate-x-2 group-hover/btn:translate-x-0" />
+                                        </Button>
+                                    </Link>
+                                </CardFooter>
+                            </Card>
+                        </motion.div>
                     ))}
                 </div>
             )}

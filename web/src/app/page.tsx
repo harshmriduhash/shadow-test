@@ -1,188 +1,255 @@
+"use client";
+
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Activity, Brain, ChartSpline, Code, ArrowRight, Zap } from "lucide-react";
+import { motion, useScroll, useTransform } from "framer-motion";
+import { Brain, Activity, ChartSpline, Code, ArrowRight, Zap, Target, Cpu, MousePointer2 } from "lucide-react";
+import { useRef } from "react";
 
 export default function LandingPage() {
+  const containerRef = useRef(null);
+  const { scrollYProgress } = useScroll({
+    target: containerRef,
+    offset: ["start start", "end start"],
+  });
+
+  const y = useTransform(scrollYProgress, [0, 1], ["0%", "50%"]);
+  const opacity = useTransform(scrollYProgress, [0, 0.5], [1, 0]);
+
   return (
-    <div className="flex flex-col min-h-screen">
+    <div ref={containerRef} className="flex flex-col min-h-screen bg-[#020202] text-zinc-100 selection:bg-primary/30 selection:text-primary">
       {/* Navbar */}
-      <header className="px-6 h-16 flex items-center border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <Link className="flex items-center justify-center font-bold text-lg gap-2" href="/">
-          <img src="/logo.png" alt="ShadowTest Logo" className="h-8 w-8 rounded-md" />
-          <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">
-            ShadowTest
+      <header className="fixed top-0 w-full z-50 px-6 h-16 flex items-center border-b border-white/[0.05] bg-black/50 backdrop-blur-xl">
+        <Link className="flex items-center justify-center font-bold text-lg gap-2 group" href="/">
+          <div className="h-8 w-8 rounded bg-primary/10 border border-primary/20 flex items-center justify-center group-hover:border-primary/50 transition-colors">
+            <Cpu className="h-5 w-5 text-primary" />
+          </div>
+          <span className="tracking-tighter text-xl">
+            Shadow<span className="text-primary">Test</span>
           </span>
         </Link>
-        <nav className="ml-auto flex gap-4 sm:gap-6 items-center">
-          <Link className="text-sm font-medium hover:text-primary transition-colors" href="#features">
+        <nav className="ml-auto flex gap-8 items-center">
+          <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="#features">
             Features
           </Link>
-          <Link className="text-sm font-medium hover:text-primary transition-colors" href="#pricing">
+          <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="#pricing">
             Pricing
           </Link>
+          <div className="h-4 w-[1px] bg-white/10" />
           <Link href="/login">
-            <Button variant="ghost" className="text-sm font-medium">Log in</Button>
+            <Button variant="ghost" className="text-sm font-medium text-zinc-400">Log in</Button>
           </Link>
           <Link href="/signup">
-            <Button size="sm">Get Started</Button>
+            <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-6 shadow-[0_0_20px_rgba(16,185,129,0.2)] hover:shadow-[0_0_30px_rgba(16,185,129,0.4)] transition-all">
+              Launch
+            </Button>
           </Link>
         </nav>
       </header>
 
       <main className="flex-1">
         {/* Hero Section */}
-        <section className="w-full py-24 md:py-32 lg:py-48 flex justify-center items-center relative overflow-hidden">
-          <div className="absolute top-1/2 left-1/2 -z-10 h-[600px] w-[800px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/20 blur-[120px] pointer-events-none" />
-          <div className="container px-4 md:px-6 text-center max-w-4xl">
-            <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl md:text-6xl lg:text-7xl mb-6 bg-clip-text text-transparent bg-gradient-to-b from-foreground to-foreground/70">
-              Synthetic Users That Test Your Product
-            </h1>
-            <p className="mx-auto max-w-[700px] text-muted-foreground md:text-xl mb-10 leading-relaxed">
-              Before your real users encounter friction, let our AI personas explore, attempt tasks, and experience confusion. Fix UX issues before launch.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Link href="/signup">
-                <Button size="lg" className="w-full sm:w-auto h-12 px-8 text-base">
-                  Start Testing Free <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              </Link>
-              <Link href="#demo">
-                <Button size="lg" variant="outline" className="w-full sm:w-auto h-12 px-8 text-base">
-                  View Demo
-                </Button>
-              </Link>
+        <section className="relative w-full min-h-screen flex flex-col justify-center items-center overflow-hidden pt-20">
+          <motion.div 
+            style={{ y, opacity }}
+            className="absolute inset-0 -z-10 bg-[url('/ai_mesh_hero_1773415944431.png')] bg-cover bg-center opacity-30 brightness-[0.4]" 
+          />
+          <div className="absolute inset-0 -z-10 bg-gradient-to-b from-transparent via-[#020202]/80 to-[#020202]" />
+          
+          <div className="container px-4 md:px-6 text-center max-w-5xl z-10">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8 }}
+            >
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-primary/20 bg-primary/5 text-primary text-xs font-mono mb-8 backdrop-blur-sm">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                </span>
+                BEHAVIOR TESTING INFRASTRUCTURE v1.0
+              </div>
+              <h1 className="text-5xl font-bold tracking-tight sm:text-7xl md:text-8xl mb-8 leading-[0.9] text-white">
+                Redefining <br />
+                <span className="text-transparent bg-clip-text bg-gradient-to-b from-zinc-100 to-zinc-500 italic font-light font-serif">User Simulation</span>
+              </h1>
+              <p className="mx-auto max-w-[640px] text-zinc-400 md:text-xl mb-12 font-light leading-relaxed">
+                Autonomous AI personas that explore, interpret, and test your product like a sophisticated human user would.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-6 justify-center">
+                <Link href="/signup">
+                  <Button size="lg" className="w-full sm:w-auto h-14 px-10 text-lg bg-primary text-primary-foreground shadow-[0_10px_40px_rgba(16,185,129,0.2)]">
+                    Start Simulation <ArrowRight className="ml-2 h-5 w-5" />
+                  </Button>
+                </Link>
+                <Link href="#features">
+                  <Button size="lg" variant="outline" className="w-full sm:w-auto h-14 px-10 text-lg border-white/10 hover:bg-white/5">
+                    Explore Engine
+                  </Button>
+                </Link>
+              </div>
+            </motion.div>
+          </div>
+          
+          {/* Scroll Indicator */}
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 2, duration: 1 }}
+            className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
+          >
+            <span className="text-[10px] uppercase tracking-[0.3em] text-zinc-500">Discover</span>
+            <div className="h-10 w-[1px] bg-gradient-to-b from-primary to-transparent" />
+          </motion.div>
+        </section>
+
+        {/* Bento Grid Features */}
+        <section id="features" className="w-full py-32 flex justify-center bg-[#020202]">
+          <div className="container px-4 md:px-6 max-w-7xl">
+            <div className="mb-20 space-y-4">
+              <h2 className="text-sm font-mono text-primary uppercase tracking-[0.4em]">Proprietary Engine</h2>
+              <h3 className="text-4xl font-bold tracking-tight text-white sm:text-6xl max-w-2xl">
+                Testing Beyond <br />The Surface.
+              </h3>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 auto-rows-[240px]">
+              {/* Feature 1: AI Personas */}
+              <motion.div 
+                whileHover={{ y: -5 }}
+                className="md:col-span-8 group relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-900/50 p-8 flex flex-col justify-end"
+              >
+                <div className="absolute top-0 right-0 p-12 -z-10 opacity-20 group-hover:opacity-40 transition-opacity">
+                  <Brain className="h-40 w-40 text-primary" />
+                </div>
+                <div className="max-w-md space-y-2">
+                  <h4 className="text-2xl font-bold text-white">Sophisticated Carbon-Copy Personas</h4>
+                  <p className="text-zinc-400 font-light">From impatient developers to enterprise buyers. Our personas inherit complex psychological traits to mimic diverse user groups.</p>
+                </div>
+              </motion.div>
+
+              {/* Feature 2: High Performance */}
+              <motion.div 
+                whileHover={{ y: -5 }}
+                className="md:col-span-4 relative overflow-hidden rounded-3xl border border-white/10 bg-primary/10 p-8 flex flex-col justify-between"
+              >
+                <Zap className="h-12 w-12 text-primary" />
+                <div className="space-y-2">
+                  <h4 className="text-2xl font-bold text-white">Sub-30s Loop</h4>
+                  <p className="text-zinc-400 text-sm font-light">Full behavioral cycle from scrape to reasoning recorded in records-breaking time.</p>
+                </div>
+              </motion.div>
+
+              {/* Feature 3: Live Trace */}
+              <motion.div 
+                whileHover={{ y: -5 }}
+                className="md:col-span-4 relative overflow-hidden rounded-3xl border border-white/10 bg-zinc-900/50 p-8 flex flex-col justify-between"
+              >
+                <Activity className="h-12 w-12 text-primary/60" />
+                <div className="space-y-2">
+                  <h4 className="text-2xl font-bold text-white">Real-time Traces</h4>
+                  <p className="text-zinc-400 text-sm font-light">Watch neural decisions stream live as the persona navigates your UX.</p>
+                </div>
+              </motion.div>
+
+              {/* Feature 4: Graph Insights */}
+              <motion.div 
+                whileHover={{ y: -5 }}
+                className="md:col-span-8 group relative overflow-hidden rounded-3xl border border-white/10 p-1 flex justify-center items-center bg-gradient-to-br from-zinc-800 to-black"
+              >
+                <img src="/simulation_graph_1773416200123.png" alt="UX Graph" className="absolute inset-0 w-full h-full object-cover opacity-30 group-hover:scale-105 transition-transform duration-700" />
+                <div className="relative z-10 p-8 w-full h-full flex flex-col justify-end">
+                  <div className="max-w-md space-y-2">
+                    <h4 className="text-2xl font-bold text-white">UX Friction Mapping</h4>
+                    <p className="text-zinc-400 font-light">Visualizing confusion points with heatmaps and abandonment event triggers.</p>
+                  </div>
+                </div>
+              </motion.div>
             </div>
           </div>
         </section>
 
-        {/* Features Section */}
-        <section id="features" className="w-full py-24 bg-muted/30 flex justify-center border-y border-border/40">
+        {/* Pricing Section - Clinical Style */}
+        <section id="pricing" className="w-full py-32 flex justify-center border-t border-white/[0.05]">
           <div className="container px-4 md:px-6 max-w-6xl">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl mb-4">Behavior Testing Infrastructure</h2>
-              <p className="text-muted-foreground md:text-lg max-w-2xl mx-auto">
-                Developers test APIs. We test human behavior. Discover usability issues autonomously.
-              </p>
+            <div className="text-center mb-24">
+              <h2 className="text-sm font-mono text-primary uppercase tracking-[0.4em] mb-4">Pricing Packages</h2>
+              <h3 className="text-4xl font-bold tracking-tight text-white max-w-2xl mx-auto">Scalable Neural Compute</h3>
             </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <Brain className="h-10 w-10 text-primary mb-2" />
-                  <CardTitle>AI Personas</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">Select from pre-built personas varying in technical knowledge, patience, and decision speed.</p>
-                </CardContent>
-              </Card>
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <Activity className="h-10 w-10 text-secondary mb-2" />
-                  <CardTitle>Behavior Simulation</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">Simulates the reasoning loop: Observation, Interpretation, Decision, Action, Outcome.</p>
-                </CardContent>
-              </Card>
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <ChartSpline className="h-10 w-10 text-accent mb-2" />
-                  <CardTitle>UX Insights</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">Generate comprehensive behavioral traces highlighting friction and confusion points.</p>
-                </CardContent>
-              </Card>
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <Code className="h-10 w-10 text-primary mb-2" />
-                  <CardTitle>Developer Testing</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">Analyze your product using just a GitHub repository URL or a live Product URL.</p>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </section>
+            <div className="grid md:grid-cols-3 gap-0 border border-white/10 rounded-3xl overflow-hidden divide-x divide-white/10">
+              <div className="p-12 space-y-8 hover:bg-white/[0.02] transition-colors">
+                <div>
+                  <h4 className="text-sm font-mono text-zinc-500 uppercase tracking-widest mb-4">Entry</h4>
+                  <div className="text-5xl font-bold text-white">$0</div>
+                </div>
+                <div className="space-y-4 text-sm text-zinc-400">
+                  <p className="flex items-center gap-2"><Target className="h-4 w-4 text-primary" /> 3 simulations / month</p>
+                  <p className="flex items-center gap-2"><Target className="h-4 w-4 text-primary" /> 1 dedicated project</p>
+                  <p className="flex items-center gap-2"><Target className="h-4 w-4 text-primary" /> Basic persona library</p>
+                </div>
+                <Button variant="outline" className="w-full border-white/10 hover:bg-white/5 py-6">Initiate</Button>
+              </div>
 
-        {/* Pricing Section */}
-        <section id="pricing" className="w-full py-24 flex justify-center">
-          <div className="container px-4 md:px-6 max-w-5xl">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl font-bold tracking-tight sm:text-4xl mb-4">Pricing Plans</h2>
-              <p className="text-muted-foreground md:text-lg max-w-2xl mx-auto">
-                Scale your synthetic user testing as your product grows.
-              </p>
-            </div>
-            <div className="grid md:grid-cols-3 gap-8 items-start">
-              <Card className="border-border bg-card/50">
-                <CardHeader>
-                  <CardTitle className="text-xl">Free</CardTitle>
-                  <div className="text-4xl font-bold mt-4">$0<span className="text-xl font-normal text-muted-foreground">/mo</span></div>
-                  <CardDescription className="mt-2">Perfect for side projects.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm text-muted-foreground font-medium">
-                  <p>• 3 simulations / month</p>
-                  <p>• 1 project limit</p>
-                  <p>• Basic personas</p>
-                </CardContent>
-                <CardFooter>
-                  <Button variant="outline" className="w-full">Get Started</Button>
-                </CardFooter>
-              </Card>
+              <div className="p-12 space-y-8 bg-primary/5 hover:bg-primary/10 transition-colors relative">
+                <div className="absolute top-6 right-6 px-2 py-0.5 border border-primary/30 text-[10px] text-primary font-mono uppercase rounded">Recommended</div>
+                <div>
+                  <h4 className="text-sm font-mono text-primary uppercase tracking-widest mb-4">Explorer</h4>
+                  <div className="text-5xl font-bold text-white">$29</div>
+                </div>
+                <div className="space-y-4 text-sm text-zinc-400">
+                  <p className="flex items-center gap-2"><Zap className="h-4 w-4 text-primary" /> 100 simulations / month</p>
+                  <p className="flex items-center gap-2"><Zap className="h-4 w-4 text-primary" /> 10 projects capacity</p>
+                  <p className="flex items-center gap-2"><Zap className="h-4 w-4 text-primary" /> Full persona tuning</p>
+                </div>
+                <Button className="w-full bg-primary text-primary-foreground py-6 shadow-[0_0_30px_rgba(16,185,129,0.3)]">Propel</Button>
+              </div>
 
-              <Card className="border-primary/50 bg-primary/5 relative scale-105 shadow-xl shadow-primary/10">
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">Most Popular</div>
-                <CardHeader>
-                  <CardTitle className="text-xl text-primary">Starter</CardTitle>
-                  <div className="text-4xl font-bold mt-4">$29<span className="text-xl font-normal text-muted-foreground">/mo</span></div>
-                  <CardDescription className="mt-2">For startups and indie hackers.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm text-muted-foreground font-medium">
-                  <p>• 100 simulations / month</p>
-                  <p>• 10 projects limit</p>
-                  <p>• Unlimited personas</p>
-                </CardContent>
-                <CardFooter>
-                  <Button className="w-full bg-primary hover:bg-primary/90">Choose Starter</Button>
-                </CardFooter>
-              </Card>
-
-              <Card className="border-border bg-card/50">
-                <CardHeader>
-                  <CardTitle className="text-xl">Pro</CardTitle>
-                  <div className="text-4xl font-bold mt-4">$99<span className="text-xl font-normal text-muted-foreground">/mo</span></div>
-                  <CardDescription className="mt-2">For professional dev teams.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm text-muted-foreground font-medium">
-                  <p>• 1000 simulations / month</p>
-                  <p>• Unlimited projects</p>
-                  <p>• Team collaboration</p>
-                </CardContent>
-                <CardFooter>
-                  <Button variant="outline" className="w-full">Choose Pro</Button>
-                </CardFooter>
-              </Card>
+              <div className="p-12 space-y-8 hover:bg-white/[0.02] transition-colors">
+                <div>
+                  <h4 className="text-sm font-mono text-zinc-500 uppercase tracking-widest mb-4">Elite</h4>
+                  <div className="text-5xl font-bold text-white">$99</div>
+                </div>
+                <div className="space-y-4 text-sm text-zinc-400">
+                  <p className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /> 1000 simulations / month</p>
+                  <p className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /> Unlimited projects</p>
+                  <p className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /> Team API Access</p>
+                </div>
+                <Button variant="outline" className="w-full border-white/10 hover:bg-white/5 py-6">Scale</Button>
+              </div>
             </div>
           </div>
         </section>
       </main>
 
       {/* Footer */}
-      <footer className="w-full py-6 flex justify-center border-t border-border/40 bg-background">
-        <div className="container px-4 md:px-6 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <p className="text-xs text-muted-foreground">
-            © 2026 ShadowTest Inc. All rights reserved.
-          </p>
-          <nav className="flex gap-4 sm:gap-6">
-            <Link className="text-xs hover:underline underline-offset-4 text-muted-foreground" href="#">
-              Terms of Service
+      <footer className="w-full py-12 flex justify-center border-t border-white/[0.05] bg-black">
+        <div className="container px-4 md:px-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-12">
+          <div className="space-y-4">
+            <Link className="flex items-center font-bold text-lg gap-2" href="/">
+              <span className="tracking-tighter text-xl">Shadow<span className="text-primary">Test</span></span>
             </Link>
-            <Link className="text-xs hover:underline underline-offset-4 text-muted-foreground" href="#">
-              Privacy
-            </Link>
-          </nav>
+            <p className="text-xs text-zinc-500 max-w-sm">
+              The world's first behavioral testing infrastructure powered by carbon-copy synthetic user personas.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-12">
+            <div className="space-y-4">
+              <h5 className="text-xs font-mono text-white uppercase tracking-widest">Product</h5>
+              <div className="flex flex-col gap-2 text-xs text-zinc-500">
+                <Link href="#" className="hover:text-primary transition-colors">Documentation</Link>
+                <Link href="#" className="hover:text-primary transition-colors">API Reference</Link>
+                <Link href="#" className="hover:text-primary transition-colors">Status</Link>
+              </div>
+            </div>
+            <div className="space-y-4">
+              <h5 className="text-xs font-mono text-white uppercase tracking-widest">Company</h5>
+              <div className="flex flex-col gap-2 text-xs text-zinc-500">
+                <Link href="#" className="hover:text-primary transition-colors">Privacy</Link>
+                <Link href="#" className="hover:text-primary transition-colors">Terms</Link>
+                <Link href="#" className="hover:text-primary transition-colors">Security</Link>
+              </div>
+            </div>
+          </div>
         </div>
       </footer>
     </div>
