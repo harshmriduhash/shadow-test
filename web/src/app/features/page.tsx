@@ -1,98 +1,115 @@
-import { Metadata } from "next";
+"use client";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Zap, Brain, Activity, ChartSpline, Code } from "lucide-react";
-
-export const metadata: Metadata = {
-    title: "Features - AI User Testing Platform",
-    description: "Explore the deep behavioral analytics features of ShadowTest. From AI Personas mimicking non-technical founders to comprehensive developer testing.",
-};
+import { Zap, Brain, Activity, ChartSpline, Code, Cpu, MousePointer2, Target, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
 
 export default function FeaturesPage() {
     return (
-        <div className="flex flex-col min-h-screen">
-            <header className="px-6 h-16 flex items-center border-b border-border/40 bg-background/95 backdrop-blur">
-                <Link className="flex items-center gap-2 font-bold text-lg" href="/">
-                    <img src="/logo.png" alt="ShadowTest Logo" className="h-8 w-8 rounded-md" />
-                    <span className="bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">ShadowTest</span>
+        <div className="flex flex-col min-h-screen bg-[#020202] text-zinc-100">
+            {/* Nav */}
+            <header className="fixed top-0 w-full z-50 px-6 h-16 flex items-center border-b border-white/[0.05] bg-black/50 backdrop-blur-xl">
+                <Link className="flex items-center justify-center font-bold text-lg gap-2 group" href="/">
+                    <div className="h-8 w-8 rounded bg-primary/10 border border-primary/20 flex items-center justify-center group-hover:border-primary/50 transition-colors">
+                        <Cpu className="h-5 w-5 text-primary" />
+                    </div>
+                    <span className="tracking-tighter text-xl text-white">
+                        Shadow<span className="text-primary">Test</span>
+                    </span>
                 </Link>
-                <nav className="ml-auto flex gap-6 items-center">
+                <nav className="ml-auto flex gap-8 items-center">
                     <Link className="text-sm font-medium text-primary" href="/features">Features</Link>
-                    <Link className="text-sm font-medium hover:text-primary transition-colors" href="/pricing">Pricing</Link>
-                    <Link href="/login"><Button variant="ghost" size="sm">Log in</Button></Link>
-                    <Link href="/signup"><Button size="sm">Get Started</Button></Link>
+                    <Link className="text-sm font-medium text-zinc-400 hover:text-primary transition-colors" href="/pricing">Pricing</Link>
+                    <Link href="/login"><Button variant="ghost" className="text-sm text-zinc-400">Log in</Button></Link>
+                    <Link href="/signup">
+                        <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-6 shadow-[0_0_20px_rgba(16,185,129,0.2)]">Launch</Button>
+                    </Link>
                 </nav>
             </header>
 
-            <main className="flex-1 py-20">
-                <div className="container px-4 md:px-6 max-w-5xl mx-auto">
-                    <div className="mb-16 text-center">
-                        <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl mb-6">Powerful Testing Features</h1>
-                        <p className="text-xl text-muted-foreground max-w-3xl mx-auto">Discover bugs you didn't know existed with AI personas running simulated actions iteratively across your platform.</p>
+            <main className="flex-1 pt-32 pb-20">
+                <div className="container px-4 md:px-6 max-w-6xl mx-auto">
+                    <div className="mb-24 space-y-4">
+                        <motion.div 
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-[10px] font-mono text-primary uppercase tracking-[0.2em]"
+                        >
+                            <Sparkles className="h-3 w-3" />
+                            Core Infrastructure
+                        </motion.div>
+                        <h1 className="text-5xl md:text-7xl font-bold tracking-tighter text-white max-w-3xl">
+                            Neural Behavioral <br /><span className="text-zinc-500">Synthesis Engine.</span>
+                        </h1>
+                        <p className="text-xl text-zinc-400 max-w-2xl font-light leading-relaxed">
+                            ShadowTest isn't just a crawler. It's a high-fidelity simulation environment where synthetic personas reason, react, and report on your UX.
+                        </p>
                     </div>
 
-                    <div className="space-y-24">
-                        <section className="flex flex-col md:flex-row items-center gap-12">
-                            <div className="flex-1">
-                                <div className="bg-primary/10 w-12 h-12 rounded-lg flex items-center justify-center mb-6">
-                                    <Brain className="h-6 w-6 text-primary" />
-                                </div>
-                                <h2 className="text-3xl font-bold mb-4">Deep Synthetic Personas</h2>
-                                <p className="text-lg text-muted-foreground mb-6">
-                                    Not all users interact with a product the same way. Synthesizer simulates "Impatient Developers", "Non-technical Founders", and "Enterprise Buyers". Each persona differs in:
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 pb-24">
+                        {/* Bento Item 1 */}
+                        <motion.div 
+                            whileHover={{ y: -5 }}
+                            className="md:col-span-8 group relative rounded-3xl border border-white/[0.05] bg-zinc-900/20 p-8 overflow-hidden"
+                        >
+                            <div className="relative z-10">
+                                <Brain className="h-10 w-10 text-primary mb-6 opacity-80" />
+                                <h3 className="text-2xl font-bold text-white mb-4">Synthetic Persona Matrix</h3>
+                                <p className="text-zinc-400 font-light leading-relaxed max-w-md">
+                                    Simulate diverse user segments from "Impatient Developers" to "Non-technical C-Suite". Each persona operates with custom technical literacy and risk tolerance.
                                 </p>
-                                <ul className="space-y-3 text-muted-foreground">
-                                    <li className="flex items-center gap-2">✓ Technical knowledge</li>
-                                    <li className="flex items-center gap-2">✓ Patience level and drop-off likelihood</li>
-                                    <li className="flex items-center gap-2">✓ Decision speed</li>
-                                    <li className="flex items-center gap-2">✓ Expected risk tolerance</li>
-                                </ul>
                             </div>
-                            <div className="flex-1 bg-card border border-border/50 rounded-xl p-8 shadow-2xl shadow-primary/5">
-                                <pre className="text-sm text-primary-foreground/80 overflow-x-auto">
-                                    {`{
-  "persona": "Impatient Developer",
-  "traits": {
-    "technical_knowledge": "Expert",
-    "patience_score": 0.2,
-    "decision_speed": "Fast",
-    "drop_off_trigger": "Requires credit card on free trial"
-  }
-}`}
-                                </pre>
-                            </div>
-                        </section>
+                            <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-primary/5 to-transparent pointer-events-none" />
+                        </motion.div>
 
-                        <section className="flex flex-col md:flex-row-reverse items-center gap-12">
-                            <div className="flex-1">
-                                <div className="bg-secondary/10 w-12 h-12 rounded-lg flex items-center justify-center mb-6">
-                                    <Activity className="h-6 w-6 text-secondary" />
-                                </div>
-                                <h2 className="text-3xl font-bold mb-4">The Behavior Loop Engine</h2>
-                                <p className="text-lg text-muted-foreground">
-                                    At the core of the ShadowTest platform is our 5-stage behavioral loop powered by state-of-the-art Large Language Models (LLMs). The AI engine systematically approaches every DOM state through a human lens: Observation, Interpretation, Decision, Action, and Outcome. You see exactly *why* a synthetic user chose one click over another.
+                        {/* Bento Item 2 */}
+                        <motion.div 
+                            whileHover={{ y: -5 }}
+                            className="md:col-span-4 rounded-3xl border border-white/[0.05] bg-zinc-900/20 p-8 flex flex-col justify-between"
+                        >
+                            <Target className="h-10 w-10 text-zinc-500 mb-6" />
+                            <div>
+                                <h3 className="text-xl font-bold text-white mb-2">Goal-Oriented Logic</h3>
+                                <p className="text-zinc-500 text-sm font-light">Defined tasks are processed through cognitive loops: Observe > Interpret > Act.</p>
+                            </div>
+                        </motion.div>
+
+                        {/* Bento Item 3 */}
+                        <motion.div 
+                            whileHover={{ y: -5 }}
+                            className="md:col-span-4 rounded-3xl border border-white/[0.05] bg-zinc-900/20 p-8"
+                        >
+                            <Activity className="h-10 w-10 text-primary mb-6" />
+                            <h3 className="text-xl font-bold text-white mb-2">Live Trace Logging</h3>
+                            <p className="text-zinc-500 text-sm font-light">Real-time breakdown of every interpretation error and friction point encounter.</p>
+                        </motion.div>
+
+                        {/* Bento Item 4 */}
+                        <motion.div 
+                            whileHover={{ y: -5 }}
+                            className="md:col-span-8 rounded-3xl border border-white/[0.05] bg-zinc-900/20 p-8 relative overflow-hidden group"
+                        >
+                            <code className="text-[10px] font-mono text-primary/40 absolute top-4 right-8 group-hover:text-primary/60 transition-colors uppercase tracking-widest">Behavioral Scripting</code>
+                            <div className="space-y-4">
+                                <h3 className="text-2xl font-bold text-white">Seamless Infrastructure Integration</h3>
+                                <p className="text-zinc-400 font-light max-w-lg">
+                                    Connect your GitHub repositories or live URLs. ShadowTest automatically maps your DOM and initializes neural testing protocols.
                                 </p>
-                            </div>
-                            <div className="flex-1 bg-gradient-to-br from-card to-background border border-border/50 rounded-xl p-8 flex flex-col gap-4">
-                                <div className="bg-background border border-border p-4 rounded-lg flex items-center gap-4">
-                                    <div className="bg-accent/20 text-accent font-bold px-3 py-1 rounded text-xs tracking-wider">OBSERVATION</div>
-                                    <p className="text-sm text-muted-foreground">"The settings cog is hidden in a hamburger menu."</p>
-                                </div>
-                                <div className="bg-background border border-border p-4 rounded-lg flex items-center gap-4">
-                                    <div className="bg-primary/20 text-primary font-bold px-3 py-1 rounded text-xs tracking-wider">INTERPRETATION</div>
-                                    <p className="text-sm text-muted-foreground">"I can't find where to change my billing cycle."</p>
-                                </div>
-                                <div className="bg-background border border-border p-4 rounded-lg flex items-center gap-4">
-                                    <div className="bg-destructive/20 text-destructive font-bold px-3 py-1 rounded text-xs tracking-wider">ACTION</div>
-                                    <p className="text-sm text-muted-foreground">"Leaves settings page."</p>
+                                <div className="pt-6 flex gap-4">
+                                    <div className="h-2 w-24 rounded-full bg-primary/20" />
+                                    <div className="h-2 w-12 rounded-full bg-zinc-800" />
+                                    <div className="h-2 w-32 rounded-full bg-zinc-800" />
                                 </div>
                             </div>
-                        </section>
+                        </motion.div>
                     </div>
                 </div>
             </main>
-            <footer className="w-full py-6 flex justify-center border-t border-border/40 bg-background text-xs text-muted-foreground">
-                © 2026 ShadowTest Inc. All rights reserved.
+
+            <footer className="w-full py-12 border-t border-white/[0.05] bg-black/50">
+                <div className="container px-4 text-center">
+                    <p className="text-[10px] font-mono text-zinc-600 uppercase tracking-[0.4em]">© 2026 ShadowTest // Neural Research Labs</p>
+                </div>
             </footer>
         </div>
     );
