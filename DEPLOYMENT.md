@@ -82,9 +82,11 @@ subscription status.
 ## 4. Verify the deployment
 
 1. Check `/health` on the API and AI service for process liveness. Then check
-   `/health/ready` on the API. It performs live PostgreSQL, Redis, Clerk JWKS,
-   AI-service, S3, and Qdrant checks and returns `200` only when all required
-   checks pass; investigate each false check before enabling user traffic.
+   `/health/ready` on the API. It performs live PostgreSQL, Redis, worker
+   heartbeat, Clerk JWKS, AI-service, S3, and Qdrant checks and returns `200`
+   only when all required checks pass; investigate each false check before
+   enabling user traffic. A reachable Redis instance alone does not count as a
+   healthy worker.
 2. Sign in through Clerk and create a project with an optional public HTTPS
    product URL or public GitHub repository.
 3. Create/select a persona, start a simulation, and confirm the worker processes

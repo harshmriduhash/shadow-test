@@ -407,6 +407,24 @@ class SimulationQueueTests(unittest.TestCase):
         self.assertEqual(fake_redis.pending, ["newer", "older"])
         self.assertEqual(fake_redis.processing, [])
 
+    def test_worker_sets_a_ttl_on_heartbeat(self):
+        class FakeRedis:
+            def __init__(self):
+                self.values = {}
+
+            async def set(self, key, value, ex):
+                self.values[key] = (value, ex)
+
+        fake_redis = FakeRedis()
+        with patch.object(worker.asyncio, "sleep", new=AsyncMock(side_effect=asyncio.CancelledError)):
+            with self.assertRaises(asyncio.CancelledError):
+                asyncio.run(worker.maintain_worker_heartbeat(fake_redis))
+
+        self.assertEqual(
+            fake_redis.values[worker.WORKER_HEARTBEAT_KEY],
+            ("ready", worker.HEARTBEAT_TTL_SECONDS),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

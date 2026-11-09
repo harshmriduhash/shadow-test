@@ -58,6 +58,7 @@ app.get('/health/ready', async (_req, res) => {
     const checks: Record<string, boolean> = {
         database: false,
         redis: false,
+        worker: false,
         clerk: false,
         aiEngine: false,
         s3: false,
@@ -99,6 +100,11 @@ app.get('/health/ready', async (_req, res) => {
         check('redis', async () => {
             if (!redisClient?.isReady) throw new Error('Redis is not connected');
             await redisClient.ping();
+        }),
+        check('worker', async () => {
+            if (!redisClient?.isReady) throw new Error('Redis is not connected');
+            const heartbeat = await redisClient.exists('shadowtest:worker:heartbeat');
+            if (!heartbeat) throw new Error('Simulation worker heartbeat is unavailable');
         }),
         check('clerk', async () => {
             const jwksUrl = process.env.CLERK_JWKS_URL

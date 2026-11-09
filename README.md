@@ -86,9 +86,9 @@ review. Track the result over several projects before making an ROI claim.
 ## What you can do
 
 - Organize product reviews into projects and create custom personas.
-- Run asynchronous, read-only AI walkthroughs that navigate same-host public
-  links and operate safe page tabs and disclosure panels; inspect saved steps
-  and evidence-led reports.
+- Run asynchronous AI walkthroughs that inspect public pages, follow safe
+  same-host links, and open tabs or disclosure panels without submitting forms
+  or changing target-site data; inspect saved steps and evidence-led reports.
 - Upload private PDF, Markdown, and plain-text project documents to provide
   searchable background context for simulations.
 - Search indexed project documents for relevant passages.
@@ -299,6 +299,10 @@ Redis. It does not create external PostgreSQL, Clerk, Anthropic, AWS, or Qdrant
 accounts for you. Deploy the backend first, then set Vercel's `API_SERVER_URL`
 to the actual public API URL ending in `/api`. Verify `/health/ready` on the API
 after configuring required services; `/health` is a liveness check only.
+The API readiness response separately reports database, Redis, worker,
+authentication, AI, object-storage, and vector-search health. The worker
+refreshes a short-lived Redis heartbeat while idle or processing a job, so
+readiness does not mistake a reachable queue for a running simulation worker.
 
 ## Trust, safety, and current limits
 
