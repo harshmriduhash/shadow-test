@@ -31,14 +31,16 @@ database schema matches it and baseline the migration with Prisma's
 1. Import the repository and set `web` as the Vercel root directory.
 2. Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` for the
    production Clerk instance.
-3. Set `NEXT_PUBLIC_API_URL` to the public Render API URL followed by `/api`.
+3. Set `API_SERVER_URL` to the public Render API URL followed by `/api`.
    Set `NEXT_PUBLIC_CONTACT_EMAIL` to the mailbox that should receive contact
    inquiries; the contact form opens a prefilled email draft in the visitor's
    email client and does not send or store the message itself.
 4. Add the deployed web origin to the API's `ALLOWED_ORIGINS` value, and set the
    same origin as the API's `APP_URL`.
-5. Redeploy after setting environment variables because the API URL is embedded
-   in the web build.
+5. Redeploy after setting environment variables. Dashboard API requests go
+   through the authenticated same-origin Next.js proxy, avoiding browser CORS
+   configuration. The API's `ALLOWED_ORIGINS` should still include the Vercel
+   origin for any direct integrations.
 
 See the service-specific `.env.example` files for local development variables.
 Never commit real `.env` files or place secret values in `NEXT_PUBLIC_*`
