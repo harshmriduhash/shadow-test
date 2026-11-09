@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
 import { api, authOptions, type ProjectDocument } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll";
 
 const ACCEPTED_TYPES = new Set(["application/pdf", "text/markdown", "text/plain"]);
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -85,6 +86,7 @@ export function ProjectDocuments({ projectId }: { projectId: string }) {
             setLoadingMore(false);
         }
     };
+    const loadMoreSentinel = useInfiniteScroll(() => { void loadMore(); }, Boolean(nextCursor) && !loadingMore && !error, nextCursor);
 
     const uploadDocument = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const input = event.currentTarget;
@@ -233,6 +235,7 @@ export function ProjectDocuments({ projectId }: { projectId: string }) {
                     </Button>
                 </div>
             )}
+            <div ref={loadMoreSentinel} aria-hidden="true" className="h-px" />
         </section>
     );
 }

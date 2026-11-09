@@ -5,8 +5,58 @@ import { LayoutDashboard, Users, Activity, FileText, Settings, Search, Cpu, Buil
 import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
+import { useAuth, useOrganization } from "@clerk/nextjs";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { api, authOptions, type DashboardSearchResults } from "@/lib/api";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+    const { getToken } = useAuth();
+    const { organization } = useOrganization();
+    const router = useRouter();
+    const [query, setQuery] = useState("");
+    const [results, setResults] = useState<DashboardSearchResults | null>(null);
+    const [searching, setSearching] = useState(false);
+    const [searchError, setSearchError] = useState("");
+    const [searchOpen, setSearchOpen] = useState(false);
+
+    const searchItems = useMemo(() => results ? [
+        ...results.projects.map(item => ({ id: item.id, title: item.name, href: item.href, category: "Projects" })),
+        ...results.personas.map(item => ({ id: item.id, title: item.name, href: item.href, category: "Personas" })),
+        ...results.simulations.map(item => ({ id: item.id, title: item.task, href: item.href, category: "Simulations" })),
+        ...results.reports.map(item => ({ id: item.id, title: item.summary || item.simulation.project.name, href: item.href, category: "Reports" }))
+    ] : [], [results]);
+
+    useEffect(() => {
+        const normalized = query.trim();
+        if (normalized.length < 2) {
+            setResults(null);
+            setSearching(false);
+            setSearchError("");
+            return;
+        }
+        setResults(null);
+        let cancelled = false;
+        const timer = window.setTimeout(() => {
+            setSearching(true);
+            setSearchError("");
+            void (async () => {
+                try {
+                    const result = await api.search(normalized, authOptions(await getToken()));
+                    if (!cancelled) setResults(result);
+                } catch (error) {
+                    if (!cancelled) setSearchError(error instanceof Error ? error.message : "Search is unavailable.");
+                } finally {
+                    if (!cancelled) setSearching(false);
+                }
+            })();
+        }, 250);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [getToken, organization?.id, query]);
+
     return (
         <div className="flex min-h-screen w-full flex-col bg-[#050505] text-zinc-100">
             <div className="flex flex-col sm:gap-4">
@@ -67,9 +117,45 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
                             <Input
                                 type="search"
-                                placeholder="Universal Search..."
+                                placeholder="Search projects, personas, runs…"
+                                value={query}
+                                onChange={event => {
+                                    setQuery(event.target.value);
+                                    setSearchOpen(true);
+                                }}
+                                onFocus={() => setSearchOpen(true)}
+                                onKeyDown={event => {
+                                    if (event.key === "Escape") setSearchOpen(false);
+                                    if (event.key === "Enter" && searchItems[0]) {
+                                        router.push(searchItems[0].href);
+                                        setSearchOpen(false);
+                                    }
+                                }}
+                                aria-label="Search projects, personas, simulations, and reports"
+                                aria-expanded={searchOpen && query.trim().length >= 2}
+                                aria-controls="dashboard-search-results"
                                 className="w-full rounded-2xl border-white/[0.05] bg-zinc-900/30 pl-10 h-10 text-sm focus:ring-primary/20 focus:border-primary/50 transition-all"
                             />
+                            {searchOpen && query.trim().length >= 2 && (
+                                <div id="dashboard-search-results" aria-label="Dashboard search results" className="absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-y-auto rounded-xl border border-white/10 bg-zinc-950 p-2 shadow-xl">
+                                    {searching && <p className="px-3 py-2 text-sm text-zinc-500">Searching…</p>}
+                                    {searchError && <p role="alert" className="px-3 py-2 text-sm text-destructive">{searchError}</p>}
+                                    {!searching && !searchError && searchItems.map(item => (
+                                        <Link
+                                            key={`${item.category}-${item.id}`}
+                                            href={item.href}
+                                            onClick={() => setSearchOpen(false)}
+                                            className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm text-zinc-300 hover:bg-white/5"
+                                        >
+                                            <span className="truncate">{item.title || "Report"}</span>
+                                            <span className="shrink-0 text-xs text-zinc-500">{item.category}</span>
+                                        </Link>
+                                    ))}
+                                    {!searching && !searchError && searchItems.length === 0 && (
+                                        <p className="px-3 py-2 text-sm text-zinc-500">No matching projects, personas, simulations, or reports.</p>
+                                    )}
+                                </div>
+                            )}
                         </div>
                         <div className="flex items-center gap-6">
                             <OrganizationSwitcher
@@ -96,6 +182,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             />
                         </div>
                     </header>
+
+                    <nav aria-label="Dashboard navigation" className="flex gap-2 overflow-x-auto px-4 pb-4 sm:hidden">
+                        {[
+                            { href: "/dashboard", label: "Projects" },
+                            { href: "/dashboard/personas", label: "Personas" },
+                            { href: "/dashboard/simulations", label: "Simulations" },
+                            { href: "/dashboard/reports", label: "Reports" },
+                            { href: "/dashboard/team", label: "Team" },
+                            { href: "/dashboard/settings", label: "Settings" }
+                        ].map(item => (
+                            <Link key={item.href} href={item.href} className="shrink-0 rounded-full border border-white/10 px-3 py-2 text-xs text-zinc-400 hover:bg-white/5 hover:text-white">
+                                {item.label}
+                            </Link>
+                        ))}
+                    </nav>
 
                     <main className="flex-1 p-8 pt-0">
                         <motion.div

@@ -14,6 +14,7 @@ import { api, authOptions, type Persona, type Project, type Simulation } from "@
 import { AIThinking } from "@/components/ai-thinking";
 import { motion, AnimatePresence } from "framer-motion";
 import { ProjectDocuments } from "./documents";
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll";
 
 export default function ProjectDetailsPage() {
     const { getToken } = useAuth();
@@ -95,6 +96,7 @@ export default function ProjectDetailsPage() {
             setLoadingMore(false);
         }
     };
+    const loadMoreSentinel = useInfiniteScroll(() => { void loadMore(); }, Boolean(nextCursor) && !loadingMore && !error, nextCursor);
 
     useEffect(() => {
         fetchData();
@@ -360,7 +362,15 @@ export default function ProjectDetailsPage() {
                                                 </div>
                                             </div>
                                         </div>
-                                        <Button variant="ghost" className="rounded-xl text-zinc-500 hover:text-white hover:bg-white/[0.05] text-xs font-mono uppercase tracking-widest h-10 px-4">View Report</Button>
+                                        {sim.reports?.[0]?.id ? (
+                                            <Link href={`/dashboard/reports/${sim.reports[0].id}`}>
+                                                <Button variant="ghost" className="rounded-xl text-zinc-500 hover:text-white hover:bg-white/[0.05] text-xs font-mono uppercase tracking-widest h-10 px-4">View Report</Button>
+                                            </Link>
+                                        ) : (
+                                            <Button variant="ghost" disabled className="rounded-xl text-zinc-500 text-xs font-mono uppercase tracking-widest h-10 px-4">
+                                                {sim.status === "COMPLETED" ? "Report pending" : "No report yet"}
+                                            </Button>
+                                        )}
                                     </div>
                                 ))}
                                 {simulations.length === 0 && <p className="text-sm text-center text-zinc-600 py-10 font-mono tracking-widest">NO LOGS AVAILABLE</p>}
@@ -371,6 +381,7 @@ export default function ProjectDetailsPage() {
                                         </Button>
                                     </div>
                                 )}
+                                <div ref={loadMoreSentinel} aria-hidden="true" className="h-px" />
                             </div>
                         </CardContent>
                     </Card>

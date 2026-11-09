@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, authOptions, type Simulation } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll";
 
 export default function SimulationsPage() {
     const { isLoaded, userId, getToken } = useAuth();
@@ -79,6 +80,7 @@ export default function SimulationsPage() {
             setLoadingMore(false);
         }
     };
+    const loadMoreSentinel = useInfiniteScroll(() => { void loadMore(); }, Boolean(nextCursor) && !loadingMore && !error, nextCursor);
 
     return (
         <div className="mx-auto max-w-5xl space-y-8">
@@ -109,6 +111,7 @@ export default function SimulationsPage() {
                     {loadingMore ? "Loading…" : "Load more simulations"}
                 </Button>
             )}
+            <div ref={loadMoreSentinel} aria-hidden="true" className="h-px" />
         </div>
     );
 }

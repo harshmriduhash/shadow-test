@@ -9,6 +9,7 @@ import { Plus, Cpu, ArrowUpRight } from "lucide-react";
 import { api, authOptions, type Project } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll";
 
 export default function DashboardPage() {
     const { isLoaded, userId, getToken } = useAuth();
@@ -52,29 +53,41 @@ export default function DashboardPage() {
             setLoadingMore(false);
         }
     };
+    const loadMoreSentinel = useInfiniteScroll(() => { void loadMore(); }, Boolean(nextCursor) && !loadingMore && !error, nextCursor);
 
     return (
         <div className="flex flex-col gap-10">
             <div className="flex items-end justify-between">
                 <div className="space-y-1">
-                    <h1 className="text-4xl font-bold tracking-tighter text-white">Infrastructure</h1>
+                    <h1 className="text-4xl font-bold tracking-tighter text-white">Projects</h1>
                     <p className="text-zinc-500 font-mono text-xs uppercase tracking-widest">Projects · {projects.length} of {totalCount}</p>
                 </div>
                 <Link href="/dashboard/projects/new">
                     <Button className="bg-primary text-primary-foreground shadow-[0_0_20px_rgba(16,185,129,0.2)] hover:shadow-[0_0_30px_rgba(16,185,129,0.4)] transition-all rounded-xl h-12 px-6">
                         <Plus className="mr-2 h-4 w-4" />
-                        New Simulation
+                        {projects.length === 0 ? "Start first evaluation" : "Create project"}
                     </Button>
                 </Link>
             </div>
 
             {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
             {!loading && projects.length === 0 && (
-                <section className="rounded-3xl border border-primary/20 bg-primary/[0.03] p-8">
-                    <h2 className="text-2xl font-semibold text-white">Welcome to ShadowTest</h2>
-                    <p className="mt-2 max-w-2xl text-sm text-zinc-400">
-                        Create a project, choose a persona, and run a read-only behavioral walkthrough of your product.
-                    </p>
+                <section className="grid gap-8 rounded-3xl border border-white/10 bg-white/[0.02] p-8 lg:grid-cols-[1fr_auto] lg:items-center">
+                    <div>
+                        <p className="text-xs font-mono uppercase tracking-widest text-primary">Your first evaluation</p>
+                        <h2 className="mt-2 text-2xl font-semibold text-white">Turn a product question into a testable walkthrough.</h2>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
+                            Add your product context, choose one of the included personas, and describe a task. ShadowTest will review public page content and return an evidence-led synthetic trace.
+                        </p>
+                        <ol className="mt-5 grid gap-3 text-sm text-zinc-400 sm:grid-cols-3">
+                            <li><span className="mr-2 text-primary">01</span>Create a project</li>
+                            <li><span className="mr-2 text-primary">02</span>Choose a persona</li>
+                            <li><span className="mr-2 text-primary">03</span>Run a read-only task</li>
+                        </ol>
+                    </div>
+                    <Link href="/dashboard/projects/new">
+                        <Button className="h-11 w-full px-6 sm:w-auto">Create your first project</Button>
+                    </Link>
                 </section>
             )}
 
@@ -155,6 +168,7 @@ export default function DashboardPage() {
                     </Button>
                 </div>
             )}
+            <div ref={loadMoreSentinel} aria-hidden="true" className="h-px" />
         </div>
     );
 }

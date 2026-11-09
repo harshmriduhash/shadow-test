@@ -106,6 +106,17 @@ class SimulationRequestTests(unittest.TestCase):
             product_url="https://example.com",
         )
         self.assertEqual(request.task, "Find the billing page")
+        self.assertEqual(request.persona_profile.technical_knowledge, 3)
+
+    def test_persona_profile_enforces_a_one_to_five_scale(self):
+        with self.assertRaises(ValueError):
+            main.SimulationRequest(
+                project_id="project",
+                persona_id="persona",
+                task="Find the billing page",
+                simulation_id="simulation",
+                persona_profile={"technical_knowledge": 6},
+            )
 
     def test_simulation_records_steps_report_and_completion(self):
         request = main.SimulationRequest(
@@ -132,6 +143,17 @@ class SimulationRequestTests(unittest.TestCase):
                 "task_complete": False,
                 "task_success": None,
                 "friction_points": [],
+                "ux_events": [{
+                    "type": "CONFUSION",
+                    "severity": "MEDIUM",
+                    "description": "The persona may not understand the section title.",
+                    "evidence": "Dashboard",
+                }, {
+                    "type": "FRICTION",
+                    "severity": "HIGH",
+                    "description": "Invented unsupported friction.",
+                    "evidence": "A product dashboard",
+                }],
             },
             {
                 "observation": "The billing page is visible.",
@@ -143,6 +165,7 @@ class SimulationRequestTests(unittest.TestCase):
                 "task_complete": True,
                 "task_success": True,
                 "friction_points": [],
+                "ux_events": [],
             },
         ]
         fake_client = SimpleNamespace(
@@ -174,6 +197,8 @@ class SimulationRequestTests(unittest.TestCase):
             "/simulations/simulation/report",
         ])
         self.assertTrue(recorded_requests[-1][1]["success"])
+        self.assertEqual([event["type"] for event in recorded_requests[-1][1]["events"]], ["CONFUSION", "SUCCESS"])
+        self.assertEqual(recorded_requests[-1][1]["events"][0]["evidence"], "Dashboard")
         self.assertEqual(update_status.await_args_list, [
             unittest.mock.call("simulation", "RUNNING"),
             unittest.mock.call("simulation", "COMPLETED"),

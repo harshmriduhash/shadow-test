@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, authOptions, type Report } from "@/lib/api";
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll";
 
 function readInsights(value: string | null) {
     if (!value) return { items: [], error: "" };
@@ -69,15 +70,19 @@ export default function ReportsPage() {
             setLoadingMore(false);
         }
     };
+    const loadMoreSentinel = useInfiniteScroll(() => { void loadMore(); }, Boolean(nextCursor) && !loadingMore && !error, nextCursor);
 
     const metrics = useMemo(() => {
         const knownOutcomes = reports.filter(report => typeof report.simulation.success === "boolean");
         const successes = knownOutcomes.filter(report => report.simulation.success).length;
-        const frictionCount = reports.reduce((total, report) => total + readInsights(report.insights).items.length, 0);
+        const eventCounts = reports.reduce((counts, report) => {
+            for (const event of report.simulation.events || []) counts[event.type] += 1;
+            return counts;
+        }, { SUCCESS: 0, FRICTION: 0, CONFUSION: 0, ABANDONMENT: 0 });
         return {
             total: totalCount,
             successRate: knownOutcomes.length ? Math.round((successes / knownOutcomes.length) * 100) : null,
-            frictionCount
+            eventCounts
         };
     }, [reports, totalCount]);
 
@@ -134,10 +139,12 @@ export default function ReportsPage() {
             </header>
             {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
 
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
                 <Card><CardHeader><CardTitle>Total reports</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.total}</p></CardContent></Card>
                 <Card><CardHeader><CardTitle>Task success rate (loaded)</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.successRate === null ? "—" : `${metrics.successRate}%`}</p></CardContent></Card>
-                <Card><CardHeader><CardTitle>Friction insights (loaded)</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.frictionCount}</p></CardContent></Card>
+                <Card><CardHeader><CardTitle>Friction events (loaded)</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.eventCounts.FRICTION}</p></CardContent></Card>
+                <Card><CardHeader><CardTitle>Confusion events (loaded)</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.eventCounts.CONFUSION}</p></CardContent></Card>
+                <Card><CardHeader><CardTitle>Potential abandonment (loaded)</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.eventCounts.ABANDONMENT}</p></CardContent></Card>
             </div>
 
             <section className="space-y-4">
@@ -157,6 +164,9 @@ export default function ReportsPage() {
                                         )}
                                     </div>
                                     <p className="mt-1 text-xs text-zinc-500">{report.simulation.persona.name} · {new Date(report.createdAt).toLocaleString()}</p>
+                                    <p className="mt-2 text-xs text-zinc-500">
+                                        {(report.simulation.events || []).length} structured UX events · synthetic walkthrough; not observed customer behavior
+                                    </p>
                                     <p className="mt-4 text-sm text-zinc-300">{report.summary}</p>
                                     {insights.items.length > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-400">{insights.items.map((insight, index) => <li key={`${report.id}-${index}`}>{insight}</li>)}</ul>}
                                     {insights.error && <p role="alert" className="mt-3 text-sm text-destructive">{insights.error}</p>}
@@ -174,6 +184,7 @@ export default function ReportsPage() {
                         {loadingMore ? "Loading…" : "Load more reports"}
                     </Button>
                 )}
+                <div ref={loadMoreSentinel} aria-hidden="true" className="h-px" />
             </section>
         </div>
     );

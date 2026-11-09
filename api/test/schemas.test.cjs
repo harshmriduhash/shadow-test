@@ -5,6 +5,7 @@ const {
     projectCreateSchema,
     projectUpdateSchema,
     documentSearchSchema,
+    dashboardSearchSchema,
     documentUploadSchema,
     simulationReportSchema,
     simulationStartSchema,
@@ -50,6 +51,13 @@ test('persona defaults to the supported model when omitted', () => {
     const result = personaCreateSchema.safeParse({ name: 'New user', traits: 'Curious and cautious' });
     assert.equal(result.success, true);
     assert.equal(result.data.behaviorModel, 'claude-sonnet');
+    assert.equal(result.data.technicalKnowledge, 3);
+    assert.equal(result.data.patience, 3);
+    assert.equal(personaCreateSchema.safeParse({
+        name: 'Expert',
+        traits: 'Highly experienced',
+        technicalKnowledge: 6
+    }).success, false);
 });
 
 test('simulation tasks must be non-empty and bounded', () => {
@@ -75,6 +83,25 @@ test('simulation reports require a summary, bounded insight list, and outcome', 
         insights: ['The navigation label was unclear.'],
         success: false
     }).success, true);
+    const report = simulationReportSchema.safeParse({
+        summary: 'A confusing label slowed the task.',
+        insights: ['The navigation label was unclear.'],
+        success: false,
+        events: [{
+            step_number: 1,
+            type: 'CONFUSION',
+            severity: 'MEDIUM',
+            description: 'The persona could not distinguish the two navigation labels.',
+            evidence: 'The page shows both labels in the primary navigation.'
+        }]
+    });
+    assert.equal(report.success, true);
+    assert.equal(simulationReportSchema.safeParse({
+        summary: 'A result.',
+        insights: [],
+        success: false,
+        events: [{ step_number: 0, type: 'ABANDONMENT', severity: 'HIGH', description: 'Stopped.' }]
+    }).success, false);
     assert.equal(simulationReportSchema.safeParse({ summary: '', insights: [], success: false }).success, false);
 });
 
@@ -100,6 +127,12 @@ test('semantic document searches require a bounded non-empty query', () => {
     assert.equal(documentSearchSchema.safeParse({ query: 'Where are invoices?' }).success, true);
     assert.equal(documentSearchSchema.safeParse({ query: '  ' }).success, false);
     assert.equal(documentSearchSchema.safeParse({ query: 'x'.repeat(2001) }).success, false);
+});
+
+test('dashboard search requires two through 120 characters', () => {
+    assert.equal(dashboardSearchSchema.safeParse({ query: 'billing' }).success, true);
+    assert.equal(dashboardSearchSchema.safeParse({ query: 'x' }).success, false);
+    assert.equal(dashboardSearchSchema.safeParse({ query: 'x'.repeat(121) }).success, false);
 });
 
 test('new accounts use free plan quotas and UTC month usage', async () => {

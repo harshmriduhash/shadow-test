@@ -180,6 +180,8 @@ Persona attributes
 • risk tolerance  
 • attention span  
 
+Each scale uses a consistent 1–5 range and is combined with the persona's written traits.
+
 ---
 
 ## 7.3 Task Definition
@@ -197,15 +199,17 @@ Examples
 
 ## 7.4 Simulation Engine
 
-The AI executes a reasoning loop:
+The AI performs a bounded, read-only behavioral walkthrough using public page text, same-site links, project context, and optional documentation. It does not sign in, submit forms, make purchases, or change product data.
+
+The AI evaluates the experience using this reasoning loop:
 
 Observation  
 Interpretation  
 Decision  
-Action  
+Proposed action
 Outcome  
 
-Each step is recorded.
+Each step is recorded. Proposed navigation is limited to links extracted from the current public page, and the report distinguishes observed page content from synthetic interpretation.
 
 ---
 
@@ -216,9 +220,11 @@ Simulation results include
 • task success rate  
 • confusion points  
 • friction points  
-• abandonment events  
+• potential abandonment risks (predictions, not observed user behavior)
 
 Reports can be exported or shared.
+
+Structured UX events include an event type, severity, step number, description, and supporting evidence. Events are scoped to the synthetic walkthrough and are not represented as real-user analytics.
 
 ---
 

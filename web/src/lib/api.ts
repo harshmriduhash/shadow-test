@@ -6,7 +6,41 @@ export interface Persona {
     name: string;
     traits: string;
     behaviorModel: string;
+    technicalKnowledge: number;
+    patience: number;
+    decisionSpeed: number;
+    riskTolerance: number;
+    attentionToDetail: number;
     createdAt: string;
+}
+
+export interface SimulationEvent {
+    id: string;
+    simulationId: string;
+    stepNumber: number;
+    type: 'SUCCESS' | 'FRICTION' | 'CONFUSION' | 'ABANDONMENT';
+    severity: 'LOW' | 'MEDIUM' | 'HIGH';
+    description: string;
+    evidence: string | null;
+    createdAt: string;
+}
+
+export interface DashboardSearchResults {
+    projects: Array<{ id: string; name: string; description: string | null; href: string }>;
+    personas: Array<{ id: string; name: string; projectId: string; project: { name: string }; href: string }>;
+    simulations: Array<{ id: string; task: string; projectId: string; status: string; project: { name: string }; href: string }>;
+    reports: Array<{ id: string; summary: string | null; simulation: { projectId: string; project: { name: string } }; href: string }>;
+}
+
+export interface WorkspaceAccess {
+    organizationId: string | null;
+    role: string;
+    capabilities: {
+        viewProjects: boolean;
+        runSimulations: boolean;
+        manageProjectsAndPersonas: boolean;
+        manageDocuments: boolean;
+    };
 }
 
 export interface CursorPage<T> {
@@ -44,6 +78,7 @@ export interface Simulation {
     persona?: Persona;
     steps?: SimulationStep[];
     reports?: Array<{ id: string; summary: string | null; insights: string | null }>;
+    events?: SimulationEvent[];
 }
 
 export interface Project {
@@ -68,6 +103,7 @@ export interface Report {
         success?: boolean | null;
         project: Pick<Project, 'id' | 'name'>;
         persona: Pick<Persona, 'id' | 'name'>;
+        events?: SimulationEvent[];
     };
 }
 
@@ -121,6 +157,11 @@ export function authOptions(token: string | null): RequestInit {
 }
 
 export const api = {
+    search: (query: string, options?: RequestInit) =>
+        fetcher<DashboardSearchResults>(`/search?query=${encodeURIComponent(query)}`, options),
+    workspace: {
+        access: (options?: RequestInit) => fetcher<WorkspaceAccess>('/workspace/access', options)
+    },
     projects: {
         list: (options?: RequestInit, cursor?: string, limit?: number) => fetcher<CursorPage<Project>>(`/projects${pageQuery(cursor, limit)}`, options),
         get: (id: string, options?: RequestInit) => fetcher<Project>(`/projects/${encodeURIComponent(id)}`, options),
@@ -143,9 +184,9 @@ export const api = {
     personas: {
         list: (projectId: string, options?: RequestInit, cursor?: string) =>
             fetcher<CursorPage<Persona>>(`/projects/${encodeURIComponent(projectId)}/personas${pageQuery(cursor)}`, options),
-        create: (projectId: string, data: Pick<Persona, 'name' | 'traits'>, options?: RequestInit) =>
+        create: (projectId: string, data: Pick<Persona, 'name' | 'traits' | 'technicalKnowledge' | 'patience' | 'decisionSpeed' | 'riskTolerance' | 'attentionToDetail'>, options?: RequestInit) =>
             fetcher<Persona>(`/projects/${encodeURIComponent(projectId)}/personas`, { ...options, method: 'POST', body: JSON.stringify(data) }),
-        update: (id: string, data: Partial<Pick<Persona, 'name' | 'traits'>>, options?: RequestInit) =>
+        update: (id: string, data: Partial<Pick<Persona, 'name' | 'traits' | 'technicalKnowledge' | 'patience' | 'decisionSpeed' | 'riskTolerance' | 'attentionToDetail'>>, options?: RequestInit) =>
             fetcher<Persona>(`/personas/${encodeURIComponent(id)}`, { ...options, method: 'PATCH', body: JSON.stringify(data) }),
         delete: (id: string, options?: RequestInit) =>
             fetcher<void>(`/personas/${encodeURIComponent(id)}`, { ...options, method: 'DELETE' }),

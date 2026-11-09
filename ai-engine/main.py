@@ -33,6 +33,14 @@ QUEUE_KEY = "shadowtest:simulations:pending"
 redis_client: Optional[Redis] = None
 
 
+class PersonaProfile(BaseModel):
+    technical_knowledge: int = Field(default=3, ge=1, le=5)
+    patience: int = Field(default=3, ge=1, le=5)
+    decision_speed: int = Field(default=3, ge=1, le=5)
+    risk_tolerance: int = Field(default=3, ge=1, le=5)
+    attention_to_detail: int = Field(default=3, ge=1, le=5)
+
+
 class SimulationRequest(BaseModel):
     project_id: str = Field(min_length=1, max_length=128)
     project_description: str = Field(default="", max_length=5000)
@@ -42,6 +50,7 @@ class SimulationRequest(BaseModel):
     product_url: Optional[str] = None
     repo_url: Optional[str] = None
     persona_traits: Optional[str] = Field(default=None, max_length=4000)
+    persona_profile: PersonaProfile = Field(default_factory=PersonaProfile)
 
 
 class ProductURLValidationRequest(BaseModel):
@@ -254,6 +263,19 @@ STEP_TOOL = {
             "task_complete": {"type": "boolean"},
             "task_success": {"type": ["boolean", "null"]},
             "friction_points": {"type": "array", "items": {"type": "string"}},
+            "ux_events": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["FRICTION", "CONFUSION", "ABANDONMENT"]},
+                        "severity": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]},
+                        "description": {"type": "string"},
+                        "evidence": {"type": "string"},
+                    },
+                    "required": ["type", "severity", "description", "evidence"],
+                },
+            },
         },
         "required": [
             "observation",
@@ -265,6 +287,7 @@ STEP_TOOL = {
             "task_complete",
             "task_success",
             "friction_points",
+            "ux_events",
         ],
     },
 }
@@ -291,6 +314,13 @@ async def ask_persona_for_step(
         "project_description": request.project_description,
         "task": request.task,
         "persona_traits": request.persona_traits or "Average user",
+        "persona_profile": {
+            "technical_knowledge": request.persona_profile.technical_knowledge,
+            "patience": request.persona_profile.patience,
+            "decision_speed": request.persona_profile.decision_speed,
+            "risk_tolerance": request.persona_profile.risk_tolerance,
+            "attention_to_detail": request.persona_profile.attention_to_detail,
+        },
         "page": page_details,
         "repository_readme": repo_readme or "No README supplied.",
         "project_documents": "\n\n".join(
@@ -304,10 +334,14 @@ async def ask_persona_for_step(
         model=ANTHROPIC_MODEL,
         max_tokens=1200,
         system=(
-            "You are a synthetic UX tester. Return one concrete next step using the provided record_behavior_step tool. "
-            "Be concise and report only what is visible or supported by context. Never claim to submit forms, change data, "
-            "or perform actions outside read-only same-site navigation. Choose next_link_index only from the provided list; "
-            "use null when no safe next page is relevant. Mark task_success true only when the available evidence shows the goal was achieved."
+            "You are a synthetic UX researcher. Return one concrete, read-only next step using record_behavior_step. "
+            "Adapt the decision to the persona profile: each scale is 1 (low) to 5 (high). Be concise and report only "
+            "what is visible or supported by supplied context. Never claim to click controls, submit forms, sign in, "
+            "change data, or do anything beyond reading the current page and following one provided same-site link. "
+            "Choose next_link_index only from the supplied list; use null when no safe page is relevant. Mark task_success "
+            "true only when evidence shows the goal is achieved. Emit structured UX events only when evidence supports them; "
+            "evidence must be a short exact excerpt from the current page text or prior observations. ABANDONMENT means "
+            "a potential predicted abandonment risk, never an observed real-user event. Do not invent evidence."
         ),
         tools=[STEP_TOOL],
         tool_choice={"type": "tool", "name": "record_behavior_step"},
@@ -434,9 +468,14 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
         )
         steps: list[dict[str, Any]] = []
         friction_points: list[str] = []
+        ux_events: list[dict[str, Any]] = []
         task_success: Optional[bool] = None
 
         for step_number in range(1, MAX_SIMULATION_STEPS + 1):
+            evidence_sources = [
+                page.text if page else "",
+                *(step.get("observation", "") for step in steps),
+            ]
             result = await ask_persona_for_step(
                 client,
                 request,
@@ -478,6 +517,28 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
                 for point in result.get("friction_points", [])
                 if isinstance(point, str) and point.strip()
             )
+            for event in result.get("ux_events", []):
+                if (
+                    not isinstance(event, dict)
+                    or event.get("type") not in {"FRICTION", "CONFUSION", "ABANDONMENT"}
+                    or event.get("severity") not in {"LOW", "MEDIUM", "HIGH"}
+                ):
+                    continue
+                description = event.get("description")
+                evidence = event.get("evidence")
+                if not isinstance(description, str) or not description.strip():
+                    continue
+                if not isinstance(evidence, str) or not evidence.strip():
+                    continue
+                if not any(evidence.strip() in source for source in evidence_sources):
+                    continue
+                ux_events.append({
+                    "step_number": step_number,
+                    "type": event["type"],
+                    "severity": event["severity"],
+                    "description": description.strip()[:1000],
+                    "evidence": evidence.strip()[:2000],
+                })
             if isinstance(result.get("task_success"), bool):
                 task_success = result["task_success"]
             if result.get("task_complete") or result.get("next_link_index") is None:
@@ -495,10 +556,18 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
         insights = list(dict.fromkeys(friction_points))[:25]
         if not insights:
             insights = ["No distinct friction point was identified during this read-only walkthrough."]
+        if task_success:
+            ux_events.append({
+                "step_number": steps[-1]["step_number"],
+                "type": "SUCCESS",
+                "severity": "LOW",
+                "description": "The synthetic persona judged the task complete based on the available evidence.",
+                "evidence": steps[-1]["outcome"][:2000],
+            })
 
         await send_internal_request(
             f"/simulations/{request.simulation_id}/report",
-            {"summary": summary, "insights": insights, "success": completed},
+            {"summary": summary, "insights": insights, "success": completed, "events": ux_events[:50]},
         )
         await update_simulation_status(request.simulation_id, "COMPLETED")
     except Exception as error:

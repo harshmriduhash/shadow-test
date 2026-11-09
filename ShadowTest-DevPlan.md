@@ -300,6 +300,22 @@ Implement
 • infinite scroll
 • Redis caching
 
+Dashboard lists support cursor-based paging and automatic loading as the user approaches the end of the current list, with a manual load-more control retained as a fallback.
+
+---
+
+# Dashboard Discovery and Collaboration
+
+Implement
+
+• first-project onboarding guidance
+• scoped search across projects, personas, simulations, and reports
+• organization-aware project workspaces
+• role-aware project, persona, and document management
+• explicit workspace capability messaging
+
+Organization members can view projects and run simulations; organization owners and admins can manage shared projects, personas, and documents.
+
 ---
 
 # Security
@@ -331,13 +347,15 @@ Select next action.
 
 Action
 
-Execute step.
+Propose a read-only navigation step. Do not sign in, submit forms, make purchases, or alter product data.
 
 Outcome
 
 Evaluate result.
 
 Store each step in database.
+
+Reports include structured success, friction, confusion, and predicted abandonment events with severity and supporting evidence. Predicted abandonment is not presented as observed user behavior.
 
 ---
 

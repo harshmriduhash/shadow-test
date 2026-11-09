@@ -7,6 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll";
+
+const personaScales = [
+    { key: "technicalKnowledge", label: "Technical knowledge" },
+    { key: "patience", label: "Patience" },
+    { key: "decisionSpeed", label: "Decision speed" },
+    { key: "riskTolerance", label: "Risk tolerance" },
+    { key: "attentionToDetail", label: "Attention to detail" }
+] as const;
+type PersonaScaleKey = typeof personaScales[number]["key"];
 
 export default function PersonasPage() {
     const { getToken } = useAuth();
@@ -17,6 +27,13 @@ export default function PersonasPage() {
     const [editingId, setEditingId] = useState("");
     const [name, setName] = useState("");
     const [traits, setTraits] = useState("");
+    const [profile, setProfile] = useState<Record<PersonaScaleKey, number>>({
+        technicalKnowledge: 3,
+        patience: 3,
+        decisionSpeed: 3,
+        riskTolerance: 3,
+        attentionToDetail: 3
+    });
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [personaCursors, setPersonaCursors] = useState<Record<string, string | null>>({});
@@ -65,11 +82,20 @@ export default function PersonasPage() {
             setLoadingMore(false);
         }
     };
+    const personaCursorKey = Object.values(personaCursors).filter((cursor): cursor is string => Boolean(cursor)).join("|");
+    const loadMoreSentinel = useInfiniteScroll(() => { void loadMore(); }, Boolean(personaCursorKey) && !loadingMore && !error, personaCursorKey);
 
     const resetForm = () => {
         setEditingId("");
         setName("");
         setTraits("");
+        setProfile({
+            technicalKnowledge: 3,
+            patience: 3,
+            decisionSpeed: 3,
+            riskTolerance: 3,
+            attentionToDetail: 3
+        });
     };
 
     const submit = async (event: React.FormEvent) => {
@@ -79,10 +105,11 @@ export default function PersonasPage() {
         setError("");
         try {
             const options = authOptions(await getToken());
+            const personaData = { name, traits, ...profile };
             if (editingId) {
-                await api.personas.update(editingId, { name, traits }, options);
+                await api.personas.update(editingId, personaData, options);
             } else {
-                await api.personas.create(projectId, { name, traits }, options);
+                await api.personas.create(projectId, personaData, options);
             }
             await load();
             resetForm();
@@ -98,6 +125,13 @@ export default function PersonasPage() {
         setProjectId(persona.projectId);
         setName(persona.name);
         setTraits(persona.traits);
+        setProfile({
+            technicalKnowledge: persona.technicalKnowledge,
+            patience: persona.patience,
+            decisionSpeed: persona.decisionSpeed,
+            riskTolerance: persona.riskTolerance,
+            attentionToDetail: persona.attentionToDetail
+        });
     };
 
     const remove = async (persona: Persona) => {
@@ -142,6 +176,22 @@ export default function PersonasPage() {
                         <Label htmlFor="persona-traits">Behavioral traits</Label>
                         <Textarea id="persona-traits" value={traits} onChange={event => setTraits(event.target.value)} required maxLength={4000} rows={5} />
                     </div>
+                    <fieldset className="grid gap-4 sm:grid-cols-2">
+                        <legend className="mb-3 text-sm font-medium text-white">Behavior profile <span className="text-xs font-normal text-zinc-500">(1 = low, 5 = high)</span></legend>
+                        {personaScales.map(scale => (
+                            <div key={scale.key} className="space-y-2">
+                                <Label htmlFor={`persona-${scale.key}`}>{scale.label}</Label>
+                                <select
+                                    id={`persona-${scale.key}`}
+                                    value={profile[scale.key]}
+                                    onChange={event => setProfile(current => ({ ...current, [scale.key]: Number(event.target.value) }))}
+                                    className="h-10 w-full rounded-md border border-white/10 bg-zinc-950 px-3 text-sm text-white"
+                                >
+                                    {[1, 2, 3, 4, 5].map(value => <option key={value} value={value}>{value} · {["Very low", "Low", "Moderate", "High", "Very high"][value - 1]}</option>)}
+                                </select>
+                            </div>
+                        ))}
+                    </fieldset>
                     <div className="flex gap-3">
                         <Button type="submit" disabled={saving || loading || !projectId}>{saving ? "Saving…" : editingId ? "Save changes" : "Add persona"}</Button>
                         {editingId && <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>}
@@ -157,6 +207,13 @@ export default function PersonasPage() {
                             <p className="font-medium text-white">{persona.name}</p>
                             <p className="mt-1 text-xs text-primary">{projects.find(project => project.id === persona.projectId)?.name}</p>
                             <p className="mt-3 whitespace-pre-wrap text-sm text-zinc-400">{persona.traits}</p>
+                            <dl className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+                                {personaScales.map(scale => (
+                                    <div key={scale.key} className="flex gap-1">
+                                        <dt>{scale.label}:</dt><dd>{persona[scale.key]}/5</dd>
+                                    </div>
+                                ))}
+                            </dl>
                         </div>
                         <div className="flex shrink-0 gap-2">
                             <Button variant="outline" size="sm" onClick={() => edit(persona)}>Edit</Button>
@@ -170,6 +227,7 @@ export default function PersonasPage() {
                         {loadingMore ? "Loading…" : "Load more personas"}
                     </Button>
                 )}
+                <div ref={loadMoreSentinel} aria-hidden="true" className="h-px" />
             </section>
         </div>
     );

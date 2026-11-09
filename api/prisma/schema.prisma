@@ -56,12 +56,17 @@ model ProjectDocument {
 }
 
 model Persona {
-  id            String   @id @default(cuid())
-  projectId     String
-  name          String
-  traits        String   // Can store JSON string
-  behaviorModel String   @map("behavior_model")
-  createdAt     DateTime @default(now())
+  id                 String   @id @default(cuid())
+  projectId          String
+  name               String
+  traits             String
+  behaviorModel      String   @map("behavior_model")
+  technicalKnowledge Int      @default(3) @map("technical_knowledge")
+  patience           Int      @default(3)
+  decisionSpeed      Int      @default(3) @map("decision_speed")
+  riskTolerance      Int      @default(3) @map("risk_tolerance")
+  attentionToDetail  Int      @default(3) @map("attention_to_detail")
+  createdAt          DateTime @default(now())
 
   project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   simulations Simulation[]
@@ -82,9 +87,26 @@ model Simulation {
   persona   Persona   @relation(fields: [personaId], references: [id], onDelete: Cascade)
   steps     SimulationStep[]
   reports   Report[]
+  events    SimulationEvent[]
 
   @@index([projectId, createdAt])
   @@index([personaId])
+}
+
+model SimulationEvent {
+  id           String   @id @default(cuid())
+  simulationId String
+  stepNumber   Int      @map("step_number")
+  type         String
+  severity     String   @default("MEDIUM")
+  description  String
+  evidence     String?
+  createdAt    DateTime @default(now())
+
+  simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  @@index([simulationId, type])
+  @@index([simulationId, stepNumber])
 }
 
 model SimulationStep {

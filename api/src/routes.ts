@@ -5,7 +5,7 @@ import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
 import { requireInternalAuth, requireSession } from './security';
-import { documentSearchSchema, documentStatusSchema, documentUploadSchema, paginationSchema, personaCreateSchema, personaUpdateSchema, projectCreateSchema, projectUpdateSchema, simulationReportSchema, simulationStartSchema, simulationStatusSchema, simulationStepSchema } from './schemas';
+import { dashboardSearchSchema, documentSearchSchema, documentStatusSchema, documentUploadSchema, paginationSchema, personaCreateSchema, personaUpdateSchema, projectCreateSchema, projectUpdateSchema, simulationReportSchema, simulationStartSchema, simulationStatusSchema, simulationStepSchema } from './schemas';
 import { getPlanUsage } from './plans';
 import { cursorArgs, cursorPage } from './pagination';
 
@@ -76,10 +76,28 @@ function projectScopeWhere(req: Request): Prisma.ProjectWhereInput {
     };
 }
 
+function canManageProject(
+    req: Request,
+    project: { userId: string; organizationId: string | null }
+) {
+    if (!req.auth) return false;
+    if (!project.organizationId) return project.userId === req.auth.userId;
+    return project.organizationId === req.auth.organizationId
+        && (req.auth.organizationRole === 'org:admin' || req.auth.organizationRole === 'org:owner');
+}
+
 async function dispatchSimulation(
     simulationId: string,
     project: { id: string; productUrl: string | null; repoUrl: string | null; description: string | null },
-    persona: { id: string; traits: string },
+    persona: {
+        id: string;
+        traits: string;
+        technicalKnowledge: number;
+        patience: number;
+        decisionSpeed: number;
+        riskTolerance: number;
+        attentionToDetail: number;
+    },
     task: string
 ) {
     const internalApiKey = process.env.INTERNAL_API_KEY;
@@ -96,7 +114,14 @@ async function dispatchSimulation(
             simulation_id: simulationId,
             product_url: project.productUrl,
             repo_url: project.repoUrl,
-            persona_traits: persona.traits
+            persona_traits: persona.traits,
+            persona_profile: {
+                technical_knowledge: persona.technicalKnowledge,
+                patience: persona.patience,
+                decision_speed: persona.decisionSpeed,
+                risk_tolerance: persona.riskTolerance,
+                attention_to_detail: persona.attentionToDetail
+            }
         }),
         signal: AbortSignal.timeout(15000)
     });
@@ -193,23 +218,110 @@ router.post('/simulations/:id/report', requireInternalAuth, asyncHandler(async (
     const simulation = await prisma.simulation.findUnique({ where: { id: simulationId }, select: { id: true } });
     if (!simulation) return res.status(404).json({ error: 'Simulation not found' });
 
-    const [report] = await prisma.$transaction([
-        prisma.report.create({
+    const report = await prisma.$transaction(async transaction => {
+        const [steps, existingEvents] = await Promise.all([
+            transaction.simulationStep.findMany({ where: { simulationId }, select: { stepNumber: true } }),
+            transaction.simulationEvent.count({ where: { simulationId } })
+        ]);
+        const stepNumbers = new Set(steps.map(step => step.stepNumber));
+        if (parsed.data.events.some(event => !stepNumbers.has(event.step_number))) {
+            return null;
+        }
+        const createdReport = await transaction.report.create({
             data: {
                 simulationId,
                 summary: parsed.data.summary,
                 insights: JSON.stringify(parsed.data.insights)
             }
-        }),
-        prisma.simulation.update({
+        });
+        if (existingEvents === 0 && parsed.data.events.length > 0) {
+            await transaction.simulationEvent.createMany({
+                data: parsed.data.events.map(event => ({
+                    simulationId,
+                    stepNumber: event.step_number,
+                    type: event.type,
+                    severity: event.severity,
+                    description: event.description,
+                    evidence: event.evidence
+                }))
+            });
+        }
+        await transaction.simulation.update({
             where: { id: simulationId },
             data: { success: parsed.data.success }
-        })
-    ]);
+        });
+        return createdReport;
+    });
+    if (!report) return invalid(res, 'Simulation events must refer to persisted steps', []);
     res.status(201).json(report);
 }));
 
 router.use(requireSession);
+
+router.get('/search', asyncHandler(async (req, res) => {
+    const parsed = dashboardSearchSchema.safeParse(req.query);
+    if (!parsed.success) return invalid(res, 'Enter at least two characters to search', parsed.error.issues);
+    await ensureUser(req);
+    const query = parsed.data.query;
+    const projectScope = projectScopeWhere(req);
+    const simulationScope = { project: projectScope };
+    const reportScope = { simulation: simulationScope };
+    const [projects, personas, simulations, reports] = await Promise.all([
+        prisma.project.findMany({
+            where: {
+                AND: [
+                    projectScope,
+                    { OR: [{ name: { contains: query, mode: 'insensitive' } }, { description: { contains: query, mode: 'insensitive' } }] }
+                ]
+            },
+            select: { id: true, name: true, description: true },
+            take: 5,
+            orderBy: { createdAt: 'desc' }
+        }),
+        prisma.persona.findMany({
+            where: { project: projectScope, OR: [{ name: { contains: query, mode: 'insensitive' } }, { traits: { contains: query, mode: 'insensitive' } }] },
+            select: { id: true, name: true, projectId: true, project: { select: { name: true } } },
+            take: 5,
+            orderBy: { createdAt: 'desc' }
+        }),
+        prisma.simulation.findMany({
+            where: { ...simulationScope, task: { contains: query, mode: 'insensitive' } },
+            select: { id: true, task: true, projectId: true, status: true, project: { select: { name: true } } },
+            take: 5,
+            orderBy: { createdAt: 'desc' }
+        }),
+        prisma.report.findMany({
+            where: { ...reportScope, OR: [{ summary: { contains: query, mode: 'insensitive' } }, { insights: { contains: query, mode: 'insensitive' } }] },
+            select: { id: true, summary: true, simulation: { select: { projectId: true, project: { select: { name: true } } } } },
+            take: 5,
+            orderBy: { createdAt: 'desc' }
+        })
+    ]);
+    res.json({
+        projects: projects.map(item => ({ ...item, href: `/dashboard/projects/${encodeURIComponent(item.id)}` })),
+        personas: personas.map(item => ({ ...item, href: '/dashboard/personas' })),
+        simulations: simulations.map(item => ({ ...item, href: `/dashboard/projects/${encodeURIComponent(item.projectId)}` })),
+        reports: reports.map(item => ({ ...item, href: `/dashboard/reports/${encodeURIComponent(item.id)}` }))
+    });
+}));
+
+router.get('/workspace/access', asyncHandler(async (req, res) => {
+    await ensureUser(req);
+    const organizationId = req.auth?.organizationId || null;
+    const canManage = !organizationId
+        || req.auth?.organizationRole === 'org:admin'
+        || req.auth?.organizationRole === 'org:owner';
+    res.json({
+        organizationId,
+        role: organizationId ? req.auth?.organizationRole || 'org:member' : 'personal owner',
+        capabilities: {
+            viewProjects: true,
+            runSimulations: true,
+            manageProjectsAndPersonas: canManage,
+            manageDocuments: canManage
+        }
+    });
+}));
 
 router.get('/projects/:projectId/documents', asyncHandler(async (req, res) => {
     const pagination = paginationSchema.safeParse(req.query);
@@ -265,6 +377,7 @@ router.post('/projects/:projectId/documents', asyncHandler(async (req, res) => {
         select: { id: true, userId: true, organizationId: true }
     });
     if (!project) return res.status(404).json({ error: 'Project not found' });
+    if (!canManageProject(req, project)) return res.status(403).json({ error: 'Only project owners and organization admins can upload project documents.' });
 
     let storage: ReturnType<typeof getS3Config>;
     try {
@@ -392,9 +505,11 @@ router.get('/documents/:id/download', asyncHandler(async (req, res) => {
 
 router.delete('/documents/:id', asyncHandler(async (req, res) => {
     const document = await prisma.projectDocument.findFirst({
-        where: { id: routeParam(req, 'id'), project: projectScopeWhere(req) }
+        where: { id: routeParam(req, 'id'), project: projectScopeWhere(req) },
+        include: { project: { select: { userId: true, organizationId: true } } }
     });
     if (!document) return res.status(404).json({ error: 'Document not found' });
+    if (!canManageProject(req, document.project)) return res.status(403).json({ error: 'Only project owners and organization admins can delete project documents.' });
 
     const internalApiKey = process.env.INTERNAL_API_KEY;
     if (!internalApiKey) return res.status(503).json({ error: 'Document search is not configured.' });
@@ -482,8 +597,12 @@ router.patch('/projects/:projectId', asyncHandler(async (req, res) => {
     if (!parsed.success) return invalid(res, 'Invalid project details', parsed.error.issues);
 
     const userId = await ensureUser(req);
-    const ownedProject = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) }, select: { id: true } });
+    const ownedProject = await prisma.project.findFirst({
+        where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) },
+        select: { id: true, userId: true, organizationId: true }
+    });
     if (!ownedProject) return res.status(404).json({ error: 'Project not found' });
+    if (!canManageProject(req, ownedProject)) return res.status(403).json({ error: 'Only project owners and organization admins can update project settings.' });
 
     if (parsed.data.productUrl !== undefined || parsed.data.repoUrl !== undefined) {
         try {
@@ -515,7 +634,10 @@ router.get('/projects/:projectId/personas', asyncHandler(async (req, res) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return invalid(res, 'Invalid pagination parameters', pagination.error.issues);
     const userId = await ensureUser(req);
-    const project = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) }, select: { id: true } });
+    const project = await prisma.project.findFirst({
+        where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) },
+        select: { id: true, userId: true, organizationId: true }
+    });
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const where = { projectId: project.id };
@@ -533,8 +655,12 @@ router.post('/projects/:projectId/personas', asyncHandler(async (req, res) => {
     if (!parsed.success) return invalid(res, 'Invalid persona details', parsed.error.issues);
 
     const userId = await ensureUser(req);
-    const project = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) }, select: { id: true } });
+    const project = await prisma.project.findFirst({
+        where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) },
+        select: { id: true, userId: true, organizationId: true }
+    });
     if (!project) return res.status(404).json({ error: 'Project not found' });
+    if (!canManageProject(req, project)) return res.status(403).json({ error: 'Only project owners and organization admins can create personas.' });
 
     const persona = await prisma.persona.create({ data: { ...parsed.data, projectId: project.id } });
     res.status(201).json(persona);
@@ -547,9 +673,10 @@ router.patch('/personas/:personaId', asyncHandler(async (req, res) => {
     const userId = await ensureUser(req);
     const persona = await prisma.persona.findFirst({
         where: { id: routeParam(req, 'personaId'), project: projectScopeWhere(req) },
-        select: { id: true }
+        include: { project: { select: { userId: true, organizationId: true } } }
     });
     if (!persona) return res.status(404).json({ error: 'Persona not found' });
+    if (!canManageProject(req, persona.project)) return res.status(403).json({ error: 'Only project owners and organization admins can update personas.' });
 
     res.json(await prisma.persona.update({ where: { id: persona.id }, data: parsed.data }));
 }));
@@ -558,9 +685,10 @@ router.delete('/personas/:personaId', asyncHandler(async (req, res) => {
     const userId = await ensureUser(req);
     const persona = await prisma.persona.findFirst({
         where: { id: routeParam(req, 'personaId'), project: projectScopeWhere(req) },
-        include: { _count: { select: { simulations: true } } }
+        include: { _count: { select: { simulations: true } }, project: { select: { userId: true, organizationId: true } } }
     });
     if (!persona) return res.status(404).json({ error: 'Persona not found' });
+    if (!canManageProject(req, persona.project)) return res.status(403).json({ error: 'Only project owners and organization admins can delete personas.' });
     if (persona._count.simulations > 0) return res.status(409).json({ error: 'Personas with simulation history cannot be deleted' });
 
     await prisma.persona.delete({ where: { id: persona.id } });
@@ -616,7 +744,8 @@ router.get('/reports', asyncHandler(async (req, res) => {
             simulation: {
                 include: {
                     project: { select: { id: true, name: true } },
-                    persona: { select: { id: true, name: true } }
+                    persona: { select: { id: true, name: true } },
+                    events: { orderBy: [{ stepNumber: 'asc' }, { createdAt: 'asc' }] }
                 }
             }
         },
@@ -636,7 +765,8 @@ router.get('/reports/:id', asyncHandler(async (req, res) => {
                 include: {
                     project: { select: { id: true, name: true } },
                     persona: { select: { id: true, name: true } },
-                    steps: { orderBy: { stepNumber: 'asc' } }
+                    steps: { orderBy: { stepNumber: 'asc' } },
+                    events: { orderBy: [{ stepNumber: 'asc' }, { createdAt: 'asc' }] }
                 }
             }
         }
