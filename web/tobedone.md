@@ -1,55 +1,179 @@
-###
-## Remaining launch plan — roughly 35%
-This is an estimate, not a precise project measurement. The code changes are pushed and targeted tests passed; the **backend is not deployed**, the documented API host returned 404, and database migration and live integrations remain unverified.
+# Remaining launch work — approximately 35%
 
-### Phase 1 — Deploy the backend to staging · ~8%
+**This is a planning estimate, not a measured completion score.** The product
+code and automated checks cover the core implementation, but ShadowTest is not
+yet verified as a live service: the backend has not been deployed to staging,
+database migration status is unconfirmed, and external integrations have not
+passed live checks.
 
-**Status:** deployment remains pending. The API now verifies a worker heartbeat
-in addition to Redis connectivity, but Render/Vercel configuration and live
-staging checks require deployment access and service credentials.
+## Is the engine ready?
 
-1. Create the Render services from the repository blueprint: API, AI service, worker, and Redis.
-2. Set the required service configuration in Render’s environment settings—especially the shared internal key, AI key, database URLs, Clerk issuer, and service URLs. Don’t put secrets in source control or chat.
-3. Set Vercel’s `API_SERVER_URL` to the actual deployed API origin ending in `/api`.
-4. Deploy and check service logs and liveness endpoints.
-**Pass when:** API and AI services are running, worker and Redis connect, and Vercel can reach the real API address.
+**The AI engine is implemented and locally testable, but it is not launch-ready
+as a live service yet.** Its automated tests pass, but production readiness
+depends on valid Anthropic credentials, the shared internal API key, Redis, a
+running worker, and configured document services. The API's `/health/ready`
+must return HTTP 200 after PostgreSQL migrations, Clerk, AI, Redis, worker,
+S3, and Qdrant are all healthy. No live staging or production readiness result
+has been confirmed.
 
-### Phase 2 — Prepare and migrate staging PostgreSQL · ~7%
+The product's current interaction boundary is intentional: simulations cover
+public HTTPS pages and safe, non-mutating interactions. They do not sign in,
+submit forms, make purchases, or alter a target site's data.
 
-1. Provision a staging PostgreSQL database and configure its pooled and direct URLs.
-2. Inspect the database’s current schema and Prisma migration status.
-3. If it’s an existing database initialized outside Prisma migrations, verify its schema and baseline appropriately—don’t blindly replay the initial migration.
-4. Apply migrations in staging and verify the new persona fields and simulation-event table exist.
-5. Check the API’s `/health/ready` endpoint.
-**Pass when:** migration status is clean and readiness confirms database connectivity and required schema. **Do not migrate production yet.**
+## Before starting: prepare configuration safely
 
-### Phase 3 — Configure live integrations · ~8%
+The repository-root `.env` is a **local configuration worksheet**. It is
+gitignored and is not automatically loaded by the web, API, or AI service.
+Never commit it or paste real secret values into issues, chat, logs, or
+`NEXT_PUBLIC_*` variables.
 
-1. Configure Clerk for the production app origin; verify sign-in, session tokens, organization membership, and roles.
-2. Configure Anthropic on both AI services and verify the worker can process a queued job.
-3. Configure S3 credentials, bucket permissions, and Vercel-origin CORS; test upload, indexing, download, and deletion.
-4. Configure Qdrant; test document indexing and project-scoped search.
-5. Confirm Redis-backed jobs and retries behave correctly.
-**Pass when:** the readiness checks report configured services as healthy, and each user-facing integration has a successful staging test. If S3 or Qdrant is intentionally excluded from launch, first make readiness and the UI accurately treat those features as unavailable rather than launch with false health reporting.
+1. Fill in the placeholders in the root `.env` as a private checklist.
+2. Copy only the variables each service needs into its own local environment:
+   - API: `api/.env`
+   - AI service and worker: `ai-engine/.env`
+   - Web: `web/.env.local`
+   Preserve any existing local values when editing those files.
+3. In staging and production, enter each value in the matching hosting
+   provider's environment-variable settings instead of uploading `.env`.
+4. Use different credentials for staging and production when the provider
+   supports separate projects/keys. Rotate any key that has been exposed.
 
-### Phase 4 — End-to-end and failure testing · ~7%
-Run tests in staging with a test account:
+### Credential and configuration inventory
 
-1. Sign up/sign in, create a project, and select or edit a persona.
-2. Run a simulation against a public test site; confirm safe tabs/disclosures and same-host links work.
-3. Verify reports and evidence persist and appear in the dashboard.
-4. Confirm blocked behavior: form submission, write requests, sign-in, purchases, popups, and off-host requests must not proceed.
-5. Exercise document upload/search, organization permissions, pagination, report export, and failed-job retry.
-6. Test useful failure behavior for unavailable AI, Redis, database, S3, or Qdrant.
-**Pass when:** the staging run completes end to end, denied actions are blocked, and failures are clearly surfaced without corrupting data.
+| Service/value | Required for | Where to obtain it |
+|---|---|---|
+| PostgreSQL pooled and direct URLs (`POSTGRES_PRISMA_URL`, `POSTGRES_URL_NON_POOLING`) | API and migrations | Database provider dashboard; for Render, [Render Dashboard](https://dashboard.render.com/) → PostgreSQL → Connect |
+| Clerk publishable and secret keys | Web sign-in | [Clerk Dashboard](https://dashboard.clerk.com/) → your application → API keys. Publishable key is public; secret key is server-only. |
+| Clerk issuer URL (and optional JWT audience) | API token validation/readiness | [Clerk Dashboard](https://dashboard.clerk.com/) → your application/JWT settings. Use the issuer for the same Clerk instance as the web keys. |
+| `ANTHROPIC_API_KEY` | AI service and worker | [Anthropic Console](https://console.anthropic.com/settings/keys). Confirm billing and model access. |
+| `INTERNAL_API_KEY` | API, AI service, and worker | Generate a private random secret, e.g. `openssl rand -hex 32`; set the exact same value on all three services. Render's blueprint can generate and share it. |
+| `REDIS_URL` | API, AI service, and worker | Local development: local Redis URL. Staging/production: Render Redis connection string from the [Render Dashboard](https://dashboard.render.com/). |
+| S3 bucket, region, access ID, secret (`AWS_*`) | API, AI service, and worker for document storage | Create a private bucket in [Amazon S3](https://console.aws.amazon.com/s3/) and least-privilege credentials/role in [AWS IAM](https://console.aws.amazon.com/iam/). Prefer a provider role over long-lived keys in production. |
+| `QDRANT_URL`, `QDRANT_API_KEY` | AI service and worker for document vector search | Create a cluster and API key in [Qdrant Cloud](https://cloud.qdrant.io/). |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `API_SERVER_URL` | Vercel web deployment | Clerk keys come from Clerk's API keys page; `API_SERVER_URL` is the deployed API origin ending in `/api`, shown by the [Render Dashboard](https://dashboard.render.com/). |
+| Stripe secret, webhook secret, and price IDs | Optional billing | [Stripe API keys](https://dashboard.stripe.com/apikeys), [webhooks](https://dashboard.stripe.com/webhooks), and product/price settings. Use test-mode values for staging. |
+| `GITHUB_TOKEN` | Optional access to private GitHub sources | [GitHub personal access tokens](https://github.com/settings/personal-access-tokens); grant only the needed repository read access. |
 
-### Phase 5 — Production rollout and early-user gate · ~5%
+`NEXT_PUBLIC_CONTACT_EMAIL`, service URLs, allowed origins, AWS region, and
+model name are configuration values, not API secrets. Stripe and GitHub access
+are optional unless those features are part of the launch scope. S3 and Qdrant
+are required for the currently implemented document upload/search experience
+and for the existing API readiness gate.
 
-1. Take a database backup and review migration/rollback steps.
-2. Configure production URLs, Clerk origins, CORS, and all required secrets in hosting dashboards.
-3. Deploy backend, verify migrations and `/health/ready`, then point Vercel at the production API.
-4. Run a production smoke test with a non-sensitive test project.
-5. Check logs, costs, and error rates; invite a small early-user group and monitor feedback before broad launch.
-**Go/no-go:** hold launch if readiness is degraded, migrations are uncertain, Clerk permissions are incorrect, a simulation can mutate a target site, or reports/jobs fail to persist.
+## Phase 1 — Deploy a complete staging environment · approximately 8%
 
-**Important boundary:** the simulation product remains limited to public pages and safe, non-mutating interactions. Login-only workflows and form-submission journeys are not part of this launch plan.
+1. Create a separate staging PostgreSQL database and connect the repository to
+   Render using the checked-in blueprint. It provisions the API, AI service,
+   simulation worker, and Redis; provision PostgreSQL and external accounts
+   separately.
+2. Set the required environment variables on the right service:
+   - **API:** database URLs, Clerk issuer, shared internal key, allowed web
+     origin, app URL, AI service URL, Redis, and S3 configuration.
+   - **AI service and worker:** shared internal key, Redis, Anthropic key/model,
+     API URL, S3 configuration, and Qdrant endpoint/key.
+   - **Vercel web:** Clerk publishable/secret keys, `API_SERVER_URL` ending in
+     `/api`, and the optional contact email.
+3. Enable Clerk Organizations if team workspaces are included in early access;
+   allow the exact staging web origin in Clerk and the API.
+4. Deploy the backend first, then configure and deploy the Vercel web app.
+5. Check service logs and `/health` liveness endpoints.
+
+**Pass when:** the deployed services start, the API can reach PostgreSQL and
+Redis, the AI service can reach Anthropic, and the web app can reach the
+deployed API. Do not copy production secrets into staging.
+
+## Phase 2 — Verify and migrate staging PostgreSQL · approximately 7%
+
+1. Confirm the pooled and direct database URLs point to staging, not production.
+2. Back up the staging database and inspect its existing schema and Prisma
+   migration history.
+3. Apply migrations with the repository's deployment command:
+   `cd api && npm run migrate:deploy`.
+4. If the database was previously initialized with `prisma db push`, stop and
+   verify the existing schema before baselining. Do not blindly replay the
+   initial migration or mark it applied without checking the schema.
+5. Confirm the required persona profile columns and `SimulationEvent` table
+   exist; check migration status and API readiness.
+
+**Pass when:** migrations are clean, expected schema is present, and the API's
+database check passes. Do not migrate production as part of this phase.
+
+## Phase 3 — Configure and verify external integrations · approximately 8%
+
+1. **Clerk:** verify sign-in/sign-out, token issuer and audience, organization
+   membership, invitations, and role-based project access with test users.
+2. **Anthropic and worker:** enqueue a staging simulation; verify the worker
+   heartbeat is present, the job is consumed, and its status, trace, and report
+   persist.
+3. **S3:** confirm private bucket access, exact-origin upload CORS, permissions,
+   file-size/type validation, upload, indexing, download, and deletion.
+4. **Qdrant:** index a test document and verify search results are scoped to
+   its project; verify deletion removes associated vectors.
+5. **Redis:** verify job dispatch, worker processing, abandoned-job recovery,
+   rate limits, and cache behavior.
+6. **Optional Stripe:** run a test checkout and verify webhook signature,
+   subscription state, and cancellation/update handling.
+
+**Pass when:** each enabled integration succeeds in staging and
+`/health/ready` returns HTTP 200. If document upload/search is intentionally
+out of scope, do not claim it works; readiness and UI behavior must instead be
+changed and tested before launch.
+
+## Phase 4 — End-to-end, safety, and failure testing · approximately 7%
+
+Use a staging account and non-sensitive test data:
+
+1. Sign up, create a project, create/edit a persona, and run a simulation on a
+   public test site.
+2. Confirm safe same-host links, tabs, and disclosure panels work; verify each
+   trace step and report evidence persists and appears in the dashboard.
+3. Verify blocked actions remain blocked: form submission, non-GET requests,
+   sign-in, purchases, downloads, popups, cross-host requests, and unsafe
+   navigation.
+4. Test document upload/search, organization permissions, pagination,
+   dashboard search, report export, and failed-job retry.
+5. Exercise dependency failures (AI, Redis, database, worker, S3, Qdrant,
+   Clerk) and confirm errors are surfaced without false success or corrupted
+   records.
+6. Review API/worker logs, rate limits, data retention/deletion, and expected
+   cloud/model costs.
+
+**Pass when:** core flows pass end to end, safety restrictions hold, and
+failure behavior is understandable and recoverable. Record and fix any
+launch-blocking defects before proceeding.
+
+## Phase 5 — Production rollout and early-user gate · approximately 5%
+
+1. Review staging results, known limitations, privacy/data handling, support
+   contact, and incident/rollback procedure.
+2. Back up production data and obtain explicit approval before applying
+   production migrations. Verify the migration plan against the actual schema.
+3. Configure production-only secrets, Clerk origins, CORS, service URLs,
+   storage permissions, monitoring, and billing settings in provider dashboards.
+4. Deploy the backend and worker; verify migrations and HTTP 200 from
+   `/health/ready` before switching web traffic.
+5. Set Vercel's production `API_SERVER_URL`, deploy, and run a smoke test with
+   a non-sensitive test project.
+6. Invite a small early-access cohort. Monitor job completion, errors, latency,
+   spend, and user feedback; pause rollout if readiness degrades or data is
+   lost.
+
+**Go/no-go:** do not open early access while migrations are uncertain,
+readiness is degraded, authentication/organization access is incorrect,
+simulation safety restrictions fail, or jobs/reports do not persist.
+
+## Launch completion checklist
+
+- [ ] Staging API, AI service, worker, Redis, and web app are deployed.
+- [ ] Staging database migrations are verified and API readiness is healthy.
+- [ ] Clerk, Anthropic, S3, and Qdrant have passed live staging checks.
+- [ ] Core user journeys, permissions, safety restrictions, and failure paths
+      pass end-to-end testing.
+- [ ] Production secrets and URLs are configured only in provider dashboards.
+- [ ] Production migration, backup, rollback, monitoring, and early-user plan
+      are reviewed.
+- [ ] Production smoke test passes and the early-user cohort is monitored.
+
+**Current boundary:** the engine evaluates public pages and performs safe,
+non-mutating interactions. Login-only workflows and form-submission journeys
+are not part of this launch scope.

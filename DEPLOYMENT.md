@@ -45,8 +45,11 @@ database schema matches it and baseline the migration with Prisma's
    origin for any direct integrations.
 
 See the service-specific `.env.example` files for local development variables.
-Never commit real `.env` files or place secret values in `NEXT_PUBLIC_*`
-variables.
+The repository-root `.env` is a private configuration worksheet only; it is not
+automatically loaded by the individual apps. Copy only the needed values into
+`api/.env`, `ai-engine/.env`, and `web/.env.local`, or set them in the hosting
+provider dashboards. Never commit real `.env` files or place secret values in
+`NEXT_PUBLIC_*` variables.
 
 ## Document search and team setup
 
