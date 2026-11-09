@@ -31,9 +31,9 @@ database schema matches it and baseline the migration with Prisma's
 1. Import the repository and set `web` as the Vercel root directory.
 2. Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` for the
    production Clerk instance.
-3. Optionally set `API_SERVER_URL` to the public Render API URL followed by
-   `/api`. When omitted, the web app uses the Render URL assigned to the
-   `shadowtest-api` service in `render.yaml`.
+3. Set `API_SERVER_URL` to the public Render API URL followed by `/api`. Use
+   the hostname shown by your deployed Render service; do not rely on an
+   unverified fallback hostname.
    Set `NEXT_PUBLIC_CONTACT_EMAIL` to the mailbox that should receive contact
    inquiries; the contact form opens a prefilled email draft in the visitor's
    email client and does not send or store the message itself.
@@ -56,22 +56,20 @@ variables.
    handles invitations and membership.
 2. Create a private S3 bucket and set `AWS_S3_BUCKET`, `AWS_REGION`,
    `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` on the API, AI service, and
-   worker. Grant the key only `s3:GetObject`, `s3:PutObject`, and
-   `s3:DeleteObject` for that bucket.
+   worker. Grant the key `s3:GetObject`, `s3:PutObject`, and
+   `s3:DeleteObject` on objects in that bucket, plus `s3:ListBucket` on the
+   bucket itself for the readiness `HeadBucket` check.
 3. Configure bucket CORS to allow `POST` from the exact Vercel application
    origin. Uploads are limited to 10 MB PDF, Markdown, or plain-text files.
 4. Create a Qdrant Cloud collection endpoint and set `QDRANT_URL` and
    `QDRANT_API_KEY` on the AI service and worker. The service creates its
    collection and embeds documents with FastEmbed on first use; the first
    indexing job downloads the embedding model.
-5. Apply the new database migration during deployment. Existing installations
-   must follow the migration-baselining warning above before enabling deploy
-   migrations.
-
-The web application defaults to `https://shadowtest-api.onrender.com/api`,
-which is the public hostname Render assigns to the blueprint's `shadowtest-api`
-service. If Render displays a different public API hostname, set
-`API_SERVER_URL` in Vercel to that exact hostname plus `/api` and redeploy.
+5. The API's Render pre-deploy command runs `prisma migrate deploy`. Before
+   using it against a database previously initialized with `prisma db push`,
+   inspect `prisma migrate status` and baseline the existing schema as
+   documented above; do not mark a migration applied unless the schema has
+   been verified.
 
 ## 3. Optional billing setup
 
@@ -83,13 +81,18 @@ subscription status.
 
 ## 4. Verify the deployment
 
-1. Check `/health` on both the API and AI service.
+1. Check `/health` on the API and AI service for process liveness. Then check
+   `/health/ready` on the API. It performs live PostgreSQL, Redis, Clerk JWKS,
+   AI-service, S3, and Qdrant checks and returns `200` only when all required
+   checks pass; investigate each false check before enabling user traffic.
 2. Sign in through Clerk and create a project with an optional public HTTPS
    product URL or public GitHub repository.
 3. Create/select a persona, start a simulation, and confirm the worker processes
    it and the dashboard displays its persisted trace and report.
 4. If billing is enabled, verify a test checkout and webhook delivery in Stripe.
 
-Simulations are read-only page walkthroughs: they inspect public page text and
-may follow same-host links. They do not operate browser controls, submit forms,
-or change data on the target product.
+Simulations run in an isolated Chromium browser. They can follow safe
+same-host public links and open accessible tabs and disclosure panels. The
+worker blocks form submissions, non-GET requests, downloads, popups,
+cross-host requests, and unsafe navigation; it does not sign in, make
+purchases, or alter target-product data.

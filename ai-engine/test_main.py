@@ -131,15 +131,22 @@ class SimulationRequestTests(unittest.TestCase):
             url="https://example.com/",
             text="Dashboard",
             links=[{"label": "Billing", "url": "https://example.com/billing"}],
+            controls=[{"label": "Account overview", "kind": "tab"}],
+        )
+        billing_page = main.PageContext(
+            url="https://example.com/billing",
+            text="Billing invoices",
+            links=[],
         )
         model_results = [
             {
-                "observation": "The dashboard has a Billing link.",
+                "observation": "The account overview tab is visible.",
                 "interpretation": "The link may lead to billing settings.",
-                "decision": "Open the Billing link.",
-                "action": "Open Billing.",
-                "outcome": "The billing area should open.",
-                "next_link_index": 0,
+                "decision": "Open the account overview tab.",
+                "action": "Open account overview.",
+                "outcome": "The panel should show more context.",
+                "next_link_index": None,
+                "next_control_index": 0,
                 "task_complete": False,
                 "task_success": None,
                 "friction_points": [],
@@ -156,12 +163,26 @@ class SimulationRequestTests(unittest.TestCase):
                 }],
             },
             {
+                "observation": "The dashboard has a Billing link.",
+                "interpretation": "The requested destination is present.",
+                "decision": "Open the Billing link.",
+                "action": "Open Billing.",
+                "outcome": "The billing area should open.",
+                "next_link_index": 0,
+                "next_control_index": None,
+                "task_complete": False,
+                "task_success": None,
+                "friction_points": [],
+                "ux_events": [],
+            },
+            {
                 "observation": "The billing page is visible.",
                 "interpretation": "The requested destination is present.",
                 "decision": "Stop the walkthrough.",
                 "action": "Review the billing page.",
                 "outcome": "The task goal is visible.",
                 "next_link_index": None,
+                "next_control_index": None,
                 "task_complete": True,
                 "task_success": True,
                 "friction_points": [],
@@ -181,17 +202,30 @@ class SimulationRequestTests(unittest.TestCase):
         async def record_request(path, payload):
             recorded_requests.append((path, payload))
 
+        browser = SimpleNamespace(
+            start=AsyncMock(),
+            open=AsyncMock(return_value=page.model_dump()),
+            click_control=AsyncMock(return_value=page.model_copy(update={"controls": []}).model_dump()),
+            follow_link=AsyncMock(return_value=billing_page.model_dump()),
+            close=AsyncMock(),
+        )
         with (
             patch.object(main, "ANTHROPIC_API_KEY", "test-key"),
             patch.object(main.anthropic, "AsyncAnthropic", return_value=fake_client),
-            patch.object(main.Scraper, "get_page_context", new=AsyncMock(return_value=page)) as fetch_page,
+            patch.object(main, "validate_public_host", new=AsyncMock(return_value=["93.184.216.34"])),
+            patch.object(main.Scraper, "get_page_context", new=AsyncMock(side_effect=[page, billing_page])) as preflight,
+            patch.object(main, "SafeBrowserSession", return_value=browser),
             patch.object(main, "send_internal_request", new=record_request),
             patch.object(main, "update_simulation_status", new=AsyncMock()) as update_status,
         ):
             asyncio.run(main.run_simulation_loop(request))
 
-        self.assertEqual(fetch_page.await_count, 2)
+        browser.click_control.assert_awaited_once_with(0)
+        browser.follow_link.assert_awaited_once_with(0, page.links[0])
+        browser.close.assert_awaited_once()
+        self.assertEqual(preflight.await_count, 2)
         self.assertEqual([path for path, _ in recorded_requests], [
+            "/simulations/simulation/steps",
             "/simulations/simulation/steps",
             "/simulations/simulation/steps",
             "/simulations/simulation/report",
@@ -240,6 +274,36 @@ class APIEndpointTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
+
+    def test_readiness_endpoint_checks_core_services_and_document_features(self):
+        with (
+            patch.object(main, "ANTHROPIC_API_KEY", "test-key"),
+            patch.object(main, "INTERNAL_API_KEY", "test-internal-key"),
+            patch.object(main, "REDIS_URL", None),
+            patch.object(main, "APP_ENV", "development"),
+            patch.object(main, "check_s3_connectivity"),
+            patch.object(main, "check_qdrant_connectivity"),
+        ):
+            response = self.client.get("/health/ready")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ready"])
+        self.assertEqual(response.json()["features"], {"s3": True, "qdrant": True})
+
+    def test_readiness_endpoint_reports_unavailable_document_services(self):
+        with (
+            patch.object(main, "ANTHROPIC_API_KEY", "test-key"),
+            patch.object(main, "INTERNAL_API_KEY", "test-internal-key"),
+            patch.object(main, "REDIS_URL", None),
+            patch.object(main, "APP_ENV", "development"),
+            patch.object(main, "check_s3_connectivity", side_effect=RuntimeError("unavailable")),
+            patch.object(main, "check_qdrant_connectivity"),
+        ):
+            response = self.client.get("/health/ready")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ready"])
+        self.assertEqual(response.json()["features"], {"s3": False, "qdrant": True})
 
     def test_health_is_degraded_without_queue_in_production(self):
         with patch.object(main, "APP_ENV", "production"), patch.object(main, "REDIS_URL", None):

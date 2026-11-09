@@ -199,7 +199,7 @@ Examples
 
 ## 7.4 Simulation Engine
 
-The AI performs a bounded, read-only behavioral walkthrough using public page text, same-site links, project context, and optional documentation. It does not sign in, submit forms, make purchases, or change product data.
+The AI performs a bounded behavioral walkthrough in an isolated browser using public page content, same-site links, project context, and optional documentation. It may open semantic tabs and disclosure panels. It does not sign in, submit forms, make purchases, or change product data.
 
 The AI evaluates the experience using this reasoning loop:
 
@@ -209,7 +209,7 @@ Decision
 Proposed action
 Outcome  
 
-Each step is recorded. Proposed navigation is limited to links extracted from the current public page, and the report distinguishes observed page content from synthetic interpretation.
+Each step is recorded. Navigation is limited to safe links extracted from the current public page. Browser requests are restricted to the same validated public host; form submissions, write requests, downloads, popups, and unsafe actions are blocked. Reports distinguish observed page content from synthetic interpretation.
 
 ---
 

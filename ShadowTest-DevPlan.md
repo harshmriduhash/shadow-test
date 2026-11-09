@@ -347,7 +347,7 @@ Select next action.
 
 Action
 
-Propose a read-only navigation step. Do not sign in, submit forms, make purchases, or alter product data.
+Follow a safe same-host link or open a semantic tab/disclosure in an isolated browser. Do not sign in, submit forms, make purchases, or alter product data.
 
 Outcome
 

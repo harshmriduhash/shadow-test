@@ -32,6 +32,17 @@ def get_qdrant_client() -> QdrantClient:
     return QdrantClient(url=url, api_key=api_key, timeout=15)
 
 
+def check_s3_connectivity() -> None:
+    bucket = os.environ.get("AWS_S3_BUCKET")
+    if not bucket:
+        raise RuntimeError("AWS_S3_BUCKET is required for document storage")
+    boto3.client("s3").head_bucket(Bucket=bucket)
+
+
+def check_qdrant_connectivity() -> None:
+    get_qdrant_client().get_collections()
+
+
 def extract_document_text(file_bytes: bytes, content_type: str) -> str:
     if not file_bytes or len(file_bytes) > MAX_DOCUMENT_BYTES:
         raise ValueError("Document is empty or exceeds the 10 MB limit")

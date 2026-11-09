@@ -42,9 +42,9 @@ research prompts:
 5. **Use the report to decide what to investigate next.** Review the run with
    your team and validate important conclusions with real users.
 
-The evaluator reads public page content and may follow links on the same host.
-It does **not** click controls, submit forms, sign in, or make changes to the
-product being reviewed.
+The evaluator reads public page content, may follow safe links on the same
+host, and can open semantic tabs and disclosure panels. It does **not** submit
+forms, sign in, make purchases, or change data in the product being reviewed.
 
 ## Does it save time and money?
 
@@ -86,8 +86,9 @@ review. Track the result over several projects before making an ROI claim.
 ## What you can do
 
 - Organize product reviews into projects and create custom personas.
-- Run asynchronous, read-only AI walkthroughs and inspect saved steps and
-  reports.
+- Run asynchronous, read-only AI walkthroughs that navigate same-host public
+  links and operate safe page tabs and disclosure panels; inspect saved steps
+  and evidence-led reports.
 - Upload private PDF, Markdown, and plain-text project documents to provide
   searchable background context for simulations.
 - Search indexed project documents for relevant passages.
@@ -141,25 +142,28 @@ flowchart TD
     AIService["5. AI service accepts simulation job"]
     Queue["6. Redis queues the job"]
     Worker["7. Worker runs the simulation"]
-    Page["8. Read public page content"]
-    Model["9. Ask AI persona to reason about the task"]
-    SaveStep["10. API saves each walkthrough step"]
-    Report["11. Save report and final simulation status"]
-    Results["12. Dashboard displays trace and report"]
+    Page["8. Render public page in isolated browser"]
+    SafeActions["9. Follow safe same-host links or open tabs/disclosures"]
+    Model["10. Ask AI persona to reason about the task"]
+    SaveStep["11. API saves each walkthrough step"]
+    Report["12. Save report and final simulation status"]
+    Results["13. Dashboard displays trace and report"]
 
     User --> Web --> API
     API --> Database
     API --> AIService --> Queue --> Worker
-    Worker --> Page --> Model --> SaveStep --> Database
+    Worker --> Page --> SafeActions --> Model --> SaveStep --> Database
     SaveStep --> Worker
     Worker --> Report --> API
     API --> Database
     Database --> API --> Results
 ```
 
-The worker repeats the page-inspection and reasoning steps until it reaches a
-result or the run's step limit. Page inspection is read-only: it does not sign
-in, click controls, or submit forms.
+The worker repeats page inspection and reasoning until it reaches a result or
+the run's step limit. Its isolated browser can follow safe, same-host public
+links and open semantic tabs or disclosure panels. It blocks form submissions,
+write requests, downloads, popups, cross-host requests, and unsafe navigation;
+it never signs in, purchases, or changes product data.
 
 #### Document upload and semantic search
 
@@ -202,7 +206,7 @@ Search results are scoped to the selected project.
 | Application API | Node.js, Express, Prisma | Authenticated routes, validation, access checks, and persistence |
 | Database | PostgreSQL | Users, projects, personas, simulations, steps, reports, and documents |
 | Queue and cache | Redis | Background jobs, short-lived API response cache, and rate-limit storage |
-| AI service and worker | Python, FastAPI | Read-only page inspection, simulation jobs, and document processing |
+| AI service and worker | Python, FastAPI, Playwright | Bounded public-page interactions, simulation jobs, and document processing |
 | Language model | Anthropic API | Persona reasoning and generated walkthrough content |
 | File storage | S3-compatible object storage | Private source documents |
 | Semantic search | Qdrant and FastEmbed | Vector indexing and project-scoped passage retrieval |
@@ -292,16 +296,17 @@ Clerk, Redis, S3, Qdrant, and optional Stripe setup.
 
 The checked-in Render blueprint provisions the API, AI service, worker, and
 Redis. It does not create external PostgreSQL, Clerk, Anthropic, AWS, or Qdrant
-accounts for you. Deploy the backend first, then configure Vercel's
-`API_SERVER_URL` to the actual public API URL ending in `/api`. Verify the API
-service's `/health` endpoint before using dashboard features.
+accounts for you. Deploy the backend first, then set Vercel's `API_SERVER_URL`
+to the actual public API URL ending in `/api`. Verify `/health/ready` on the API
+after configuring required services; `/health` is a liveness check only.
 
 ## Trust, safety, and current limits
 
 - **A research aid, not ground truth:** AI-generated observations are
   suggestions to verify, not evidence that real customers behave the same way.
-- **Read-only evaluation:** ShadowTest inspects page text and same-host links;
-  it does not operate controls, submit forms, or modify target sites.
+- **Bounded interaction:** ShadowTest may follow safe same-host public links
+  and open semantic tabs or disclosure panels. It blocks form submissions,
+  writes, downloads, popups, cross-host requests, and unsafe navigation.
 - **Public pages only:** Evaluated pages must be publicly reachable over HTTPS.
   Login-only and private application flows are not evaluated.
 - **Document formats and size:** PDF, Markdown, and plain-text uploads are

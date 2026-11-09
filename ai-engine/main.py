@@ -16,7 +16,15 @@ from bs4 import BeautifulSoup
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from documents import delete_document_vectors, document_index_payload, index_document, search_project_documents
+from browser import SafeBrowserSession
+from documents import (
+    check_qdrant_connectivity,
+    check_s3_connectivity,
+    delete_document_vectors,
+    document_index_payload,
+    index_document,
+    search_project_documents,
+)
 
 load_dotenv()
 
@@ -74,6 +82,7 @@ class PageContext(BaseModel):
     url: str
     text: str
     links: list[dict[str, str]]
+    controls: list[dict[str, str]] = Field(default_factory=list)
 
 
 def parse_public_https_url(url: str):
@@ -250,7 +259,7 @@ class Scraper:
 
 STEP_TOOL = {
     "name": "record_behavior_step",
-    "description": "Record one read-only behavioral testing step and choose whether to follow a same-site navigation link.",
+    "description": "Record one non-mutating behavior step and optionally follow a safe same-host link or open a semantic tab/disclosure.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -260,6 +269,7 @@ STEP_TOOL = {
             "action": {"type": "string"},
             "outcome": {"type": "string"},
             "next_link_index": {"type": ["integer", "null"]},
+            "next_control_index": {"type": ["integer", "null"]},
             "task_complete": {"type": "boolean"},
             "task_success": {"type": ["boolean", "null"]},
             "friction_points": {"type": "array", "items": {"type": "string"}},
@@ -284,6 +294,7 @@ STEP_TOOL = {
             "action",
             "outcome",
             "next_link_index",
+            "next_control_index",
             "task_complete",
             "task_success",
             "friction_points",
@@ -306,7 +317,13 @@ async def ask_persona_for_step(
         link_list = "\n".join(
             f"{index}. {link['label']}" for index, link in enumerate(page.links)
         ) or "(No same-site navigation links found.)"
-        page_details = f"Current URL: {page.url}\nVisible page text:\n{page.text}\nAvailable same-site links:\n{link_list}"
+        control_list = "\n".join(
+            f"{index}. {control['kind']}: {control['label']}" for index, control in enumerate(page.controls)
+        ) or "(No safe tabs or disclosure controls found.)"
+        page_details = (
+            f"Current URL: {page.url}\nVisible page text:\n{page.text}\n"
+            f"Available same-site links:\n{link_list}\nSafe controls (tabs and disclosures only):\n{control_list}"
+        )
     else:
         page_details = "No product URL was provided. Use the project description and README only; do not claim to have interacted with a live interface."
 
@@ -336,10 +353,13 @@ async def ask_persona_for_step(
         system=(
             "You are a synthetic UX researcher. Return one concrete, read-only next step using record_behavior_step. "
             "Adapt the decision to the persona profile: each scale is 1 (low) to 5 (high). Be concise and report only "
-            "what is visible or supported by supplied context. Never claim to click controls, submit forms, sign in, "
-            "change data, or do anything beyond reading the current page and following one provided same-site link. "
-            "Choose next_link_index only from the supplied list; use null when no safe page is relevant. Mark task_success "
-            "true only when evidence shows the goal is achieved. Emit structured UX events only when evidence supports them; "
+            "what is visible or supported by supplied context. You may follow a provided safe same-site link or click "
+            "a listed semantic tab/disclosure only. Never submit forms, sign in, change data, or claim any action that "
+            "the browser did not complete. "
+            "Choose either next_link_index from the supplied list or next_control_index from the safe controls, never both. "
+            "Safe controls are limited to tabs and disclosure panels; never select a form field, submit button, or other action. "
+            "Use null for both indexes when no safe action is relevant. Mark task_success true only when evidence shows the goal is achieved. "
+            "Emit structured UX events only when evidence supports them; "
             "evidence must be a short exact excerpt from the current page text or prior observations. ABANDONMENT means "
             "a potential predicted abandonment risk, never an observed real-user event. Do not invent evidence."
         ),
@@ -454,12 +474,21 @@ async def process_document_job(payload: dict[str, Any]) -> None:
 
 
 async def run_simulation_loop(request: SimulationRequest) -> None:
+    browser: Optional[SafeBrowserSession] = None
     try:
         if not ANTHROPIC_API_KEY:
             raise RuntimeError("ANTHROPIC_API_KEY is not configured")
         await update_simulation_status(request.simulation_id, "RUNNING")
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-        page = await Scraper.get_page_context(request.product_url) if request.product_url else None
+        if request.product_url:
+            parsed_url = parse_public_https_url(request.product_url)
+            addresses = await validate_public_host(parsed_url.hostname or "")
+            await Scraper.get_page_context(request.product_url)
+            browser = SafeBrowserSession(request.product_url, addresses[0])
+            await browser.start()
+            page = PageContext(**(await browser.open()))
+        else:
+            page = None
         readme = await Scraper.get_readme(request.repo_url) if request.repo_url else None
         project_documents = (
             await asyncio.to_thread(search_project_documents, request.project_id, request.task)
@@ -486,21 +515,48 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
                 project_documents,
             )
             next_link_index = result.get("next_link_index")
-            if next_link_index is not None:
+            next_control_index = result.get("next_control_index")
+            if next_link_index is not None and next_control_index is not None:
+                result["outcome"] = f"{result['outcome']} The proposed action was rejected because only one safe action may be taken per step."
+                result["action"] = "No action taken because the response selected multiple actions."
+                result["next_link_index"] = None
+                result["next_control_index"] = None
+            elif next_link_index is not None:
                 if (
                     not isinstance(next_link_index, int)
                     or isinstance(next_link_index, bool)
                     or page is None
+                    or browser is None
                     or next_link_index < 0
                     or next_link_index >= len(page.links)
                 ):
                     result["outcome"] = f"{result['outcome']} The proposed navigation was rejected because it was not a valid same-site link."
+                    result["action"] = "No navigation taken because the selected link was not allowed."
                     result["next_link_index"] = None
                 else:
-                    next_url = page.links[next_link_index]["url"]
+                    await Scraper.get_page_context(page.links[next_link_index]["url"])
                     result["action"] = f"Open same-site page: {page.links[next_link_index]['label']}"
-                    page = await Scraper.get_page_context(next_url)
+                    page = PageContext(**(await browser.follow_link(next_link_index, page.links[next_link_index])))
                     result["outcome"] = f"{result['outcome']} Loaded the linked page successfully."
+            elif next_control_index is not None:
+                if (
+                    not isinstance(next_control_index, int)
+                    or isinstance(next_control_index, bool)
+                    or page is None
+                    or browser is None
+                    or next_control_index < 0
+                    or next_control_index >= len(page.controls)
+                ):
+                    result["outcome"] = f"{result['outcome']} The proposed control was rejected because it was not a safe visible tab or disclosure."
+                    result["action"] = "No control opened because the selected control was not allowed."
+                    result["next_control_index"] = None
+                else:
+                    control = page.controls[next_control_index]
+                    result["action"] = f"Open {control['kind']}: {control['label']}"
+                    page = PageContext(**(await browser.click_control(next_control_index)))
+                    result["outcome"] = f"{result['outcome']} Opened the public-page {control['kind']}."
+            else:
+                result["action"] = "Review the current context without taking an interaction action."
 
             step_data = {
                 "step_number": step_number,
@@ -541,7 +597,9 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
                 })
             if isinstance(result.get("task_success"), bool):
                 task_success = result["task_success"]
-            if result.get("task_complete") or result.get("next_link_index") is None:
+            if result.get("task_complete") or (
+                result.get("next_link_index") is None and result.get("next_control_index") is None
+            ):
                 break
 
         completed = task_success is True
@@ -576,6 +634,12 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
             await update_simulation_status(request.simulation_id, "FAILED")
         except Exception as status_error:
             print(f"Could not record failure status for {request.simulation_id}: {status_error}")
+    finally:
+        if browser is not None:
+            try:
+                await browser.close()
+            except Exception as close_error:
+                print(f"Could not close browser for simulation {request.simulation_id}: {close_error}")
 
 
 @app.get("/health")
@@ -599,6 +663,51 @@ async def health_check():
         "status": "ok" if queue_ready else "degraded",
         "service": "ShadowTest AI Engine",
         "ready": bool(ANTHROPIC_API_KEY and INTERNAL_API_KEY and queue_ready),
+    }
+
+
+@app.get("/health/ready")
+async def readiness_check():
+    queue_ready = APP_ENV != "production"
+    if REDIS_URL:
+        try:
+            global redis_client
+            if redis_client is None:
+                redis_client = Redis.from_url(
+                    REDIS_URL,
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                )
+            await redis_client.ping()
+            queue_ready = True
+        except Exception as error:
+            print(f"AI readiness Redis check failed: {error}")
+            queue_ready = False
+
+    checks = {
+        "anthropic": bool(ANTHROPIC_API_KEY),
+        "internalApi": bool(INTERNAL_API_KEY),
+        "redis": queue_ready,
+    }
+    features: dict[str, bool] = {}
+    for name, check in (
+        ("s3", check_s3_connectivity),
+        ("qdrant", check_qdrant_connectivity),
+    ):
+        try:
+            await asyncio.wait_for(asyncio.to_thread(check), timeout=8)
+            features[name] = True
+        except Exception as error:
+            print(f"AI readiness {name} check failed: {error}")
+            features[name] = False
+    ready = all(checks.values())
+    return {
+        "status": "ready" if ready else "degraded",
+        "service": "ShadowTest AI Engine",
+        "ready": ready,
+        "checks": checks,
+        "features": features,
     }
 
 
