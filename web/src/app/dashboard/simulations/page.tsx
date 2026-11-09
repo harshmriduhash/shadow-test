@@ -1,38 +1,90 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useOrganization } from "@clerk/nextjs";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, authOptions, type Simulation } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
 export default function SimulationsPage() {
     const { isLoaded, userId, getToken } = useAuth();
+    const { organization } = useOrganization();
     const [simulations, setSimulations] = useState<Simulation[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [totalCount, setTotalCount] = useState(0);
     const [error, setError] = useState("");
+    const hasLoadedMore = useRef(false);
+
+    const refreshSimulations = useCallback(async () => {
+        const page = await api.simulations.list(authOptions(await getToken()));
+        setSimulations(current => {
+            const byId = new Map(current.map(simulation => [simulation.id, simulation]));
+            page.items.forEach(simulation => byId.set(simulation.id, simulation));
+            return Array.from(byId.values()).sort((left, right) =>
+                new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+            );
+        });
+        if (!hasLoadedMore.current) setNextCursor(page.nextCursor);
+        setTotalCount(page.totalCount);
+    }, [getToken]);
 
     useEffect(() => {
         if (!isLoaded || !userId) return;
         let cancelled = false;
-        void (async () => {
-            try {
-                const records = await api.simulations.list(authOptions(await getToken()));
-                if (!cancelled) setSimulations(records);
-            } catch (loadError) {
+        hasLoadedMore.current = false;
+        setSimulations([]);
+        setNextCursor(null);
+        setTotalCount(0);
+        setLoading(true);
+        void refreshSimulations()
+            .catch(loadError => {
                 if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load simulations.");
-            } finally {
+            })
+            .finally(() => {
                 if (!cancelled) setLoading(false);
-            }
-        })();
+            });
         return () => { cancelled = true; };
-    }, [getToken, isLoaded, userId]);
+    }, [isLoaded, organization?.id, refreshSimulations, userId]);
+
+    useEffect(() => {
+        if (!simulations.some(simulation => simulation.status === "PENDING" || simulation.status === "RUNNING")) return;
+        const interval = window.setInterval(() => {
+            void refreshSimulations().catch(loadError => {
+                setError(loadError instanceof Error ? loadError.message : "Unable to refresh simulations.");
+            });
+        }, 3000);
+        return () => window.clearInterval(interval);
+    }, [refreshSimulations, simulations]);
+
+    const loadMore = async () => {
+        if (!nextCursor) return;
+        setLoadingMore(true);
+        setError("");
+        try {
+            const page = await api.simulations.list(authOptions(await getToken()), nextCursor);
+            setSimulations(current => {
+                const byId = new Map(current.map(simulation => [simulation.id, simulation]));
+                page.items.forEach(simulation => byId.set(simulation.id, simulation));
+                return Array.from(byId.values()).sort((left, right) =>
+                    new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+                );
+            });
+            hasLoadedMore.current = true;
+            setNextCursor(page.nextCursor);
+        } catch (loadError) {
+            setError(loadError instanceof Error ? loadError.message : "Unable to load more simulations.");
+        } finally {
+            setLoadingMore(false);
+        }
+    };
 
     return (
         <div className="mx-auto max-w-5xl space-y-8">
             <header>
                 <h1 className="text-4xl font-bold tracking-tight text-white">Simulations</h1>
-                <p className="mt-2 text-sm text-zinc-400">Your recent behavioral runs and their current status.</p>
+                <p className="mt-2 text-sm text-zinc-400">Showing {simulations.length} of {totalCount} behavioral runs.</p>
             </header>
             {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
             {loading ? <p className="text-sm text-zinc-500">Loading simulations…</p> : simulations.map(simulation => (
@@ -52,6 +104,11 @@ export default function SimulationsPage() {
                 </article>
             ))}
             {!loading && simulations.length === 0 && <p className="rounded-xl border border-white/10 p-6 text-sm text-zinc-500">No simulations yet. Open a project to start a run.</p>}
+            {!loading && nextCursor && (
+                <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
+                    {loadingMore ? "Loading…" : "Load more simulations"}
+                </Button>
+            )}
         </div>
     );
 }

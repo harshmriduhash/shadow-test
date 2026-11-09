@@ -16,6 +16,7 @@ from bs4 import BeautifulSoup
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from documents import delete_document_vectors, document_index_payload, index_document, search_project_documents
 
 load_dotenv()
 
@@ -45,6 +46,19 @@ class SimulationRequest(BaseModel):
 
 class ProductURLValidationRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
+
+
+class DocumentIndexRequest(BaseModel):
+    document_id: str = Field(min_length=1, max_length=128)
+    project_id: str = Field(min_length=1, max_length=128)
+    storage_key: str = Field(min_length=1, max_length=1024)
+    content_type: str = Field(pattern=r"^(application/pdf|text/markdown|text/plain)$")
+    file_name: str = Field(min_length=1, max_length=255)
+
+
+class DocumentSearchRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=128)
+    query: str = Field(min_length=1, max_length=2000)
 
 
 class PageContext(BaseModel):
@@ -263,6 +277,7 @@ async def ask_persona_for_step(
     prior_steps: list[dict[str, Any]],
     step_number: int,
     repo_readme: Optional[str],
+    project_documents: list[dict[str, Any]],
 ) -> dict[str, Any]:
     if page:
         link_list = "\n".join(
@@ -278,6 +293,9 @@ async def ask_persona_for_step(
         "persona_traits": request.persona_traits or "Average user",
         "page": page_details,
         "repository_readme": repo_readme or "No README supplied.",
+        "project_documents": "\n\n".join(
+            f"{document['file_name']}: {document['text']}" for document in project_documents
+        ) or "No relevant project documents were found.",
         "previous_steps": prior_steps,
         "step_number": step_number,
         "max_steps": MAX_SIMULATION_STEPS,
@@ -345,6 +363,62 @@ async def enqueue_simulation(request: SimulationRequest) -> bool:
     return True
 
 
+async def enqueue_document_index(request: DocumentIndexRequest) -> bool:
+    if not REDIS_URL:
+        return False
+    global redis_client
+    if redis_client is None:
+        redis_client = Redis.from_url(
+            REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+        )
+    try:
+        await redis_client.ping()
+        await redis_client.rpush(
+            QUEUE_KEY,
+            json.dumps({"job_type": "document_index", "document": request.model_dump()}),
+        )
+    except Exception as error:
+        print(f"Unable to enqueue document {request.document_id}: {error}")
+        raise HTTPException(status_code=503, detail="Document queue is temporarily unavailable") from error
+    return True
+
+
+async def update_document_status(document_id: str, status: str, error: Optional[str] = None) -> None:
+    if not INTERNAL_API_KEY:
+        raise RuntimeError("INTERNAL_API_KEY is not configured")
+    payload: dict[str, str] = {"status": status}
+    if error:
+        payload["error"] = error[:1000]
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        response = await client.patch(
+            f"{API_URL}/documents/{document_id}/status",
+            json=payload,
+            headers={"X-Internal-Api-Key": INTERNAL_API_KEY},
+        )
+    response.raise_for_status()
+
+
+async def process_document_job(payload: dict[str, Any]) -> None:
+    document_id = str(payload.get("document_id", "unknown"))
+    try:
+        details = document_index_payload(payload)
+        await asyncio.to_thread(index_document, *details)
+        await update_document_status(details[0], "READY")
+    except Exception as error:
+        print(f"Document indexing failed for {document_id}: {error}")
+        try:
+            await update_document_status(
+                document_id,
+                "FAILED",
+                "Indexing failed. Verify the file contains readable text and retry the upload.",
+            )
+        except Exception as status_error:
+            print(f"Could not record document indexing failure for {document_id}: {status_error}")
+
+
 async def run_simulation_loop(request: SimulationRequest) -> None:
     try:
         if not ANTHROPIC_API_KEY:
@@ -353,12 +427,25 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
         client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
         page = await Scraper.get_page_context(request.product_url) if request.product_url else None
         readme = await Scraper.get_readme(request.repo_url) if request.repo_url else None
+        project_documents = (
+            await asyncio.to_thread(search_project_documents, request.project_id, request.task)
+            if os.environ.get("QDRANT_URL")
+            else []
+        )
         steps: list[dict[str, Any]] = []
         friction_points: list[str] = []
         task_success: Optional[bool] = None
 
         for step_number in range(1, MAX_SIMULATION_STEPS + 1):
-            result = await ask_persona_for_step(client, request, page, steps, step_number, readme)
+            result = await ask_persona_for_step(
+                client,
+                request,
+                page,
+                steps,
+                step_number,
+                readme,
+                project_documents,
+            )
             next_link_index = result.get("next_link_index")
             if next_link_index is not None:
                 if (
@@ -474,6 +561,52 @@ async def start_simulation(
         raise HTTPException(status_code=503, detail="REDIS_URL is required in production")
     background_tasks.add_task(run_simulation_loop, request)
     return {"status": "started", "simulation_id": request.simulation_id}
+
+
+@app.post("/documents/index", status_code=202)
+async def start_document_index(
+    request: DocumentIndexRequest,
+    background_tasks: BackgroundTasks,
+    x_internal_api_key: Optional[str] = Header(default=None),
+):
+    validate_request_internal_key(x_internal_api_key)
+    if await enqueue_document_index(request):
+        return {"status": "queued", "document_id": request.document_id}
+    if APP_ENV == "production":
+        raise HTTPException(status_code=503, detail="REDIS_URL is required for document indexing")
+    background_tasks.add_task(process_document_job, request.model_dump())
+    return {"status": "started", "document_id": request.document_id}
+
+
+@app.post("/documents/search")
+async def search_documents(
+    request: DocumentSearchRequest,
+    x_internal_api_key: Optional[str] = Header(default=None),
+):
+    validate_request_internal_key(x_internal_api_key)
+    try:
+        results = await asyncio.to_thread(
+            search_project_documents,
+            request.project_id,
+            request.query,
+        )
+    except Exception as error:
+        print(f"Document search failed for project {request.project_id}: {error}")
+        raise HTTPException(status_code=503, detail="Document search is temporarily unavailable") from error
+    return {"results": results}
+
+
+@app.delete("/documents/{document_id}", status_code=204)
+async def remove_document_index(
+    document_id: str,
+    x_internal_api_key: Optional[str] = Header(default=None),
+):
+    validate_request_internal_key(x_internal_api_key)
+    try:
+        await asyncio.to_thread(delete_document_vectors, document_id)
+    except Exception as error:
+        print(f"Could not remove search vectors for {document_id}: {error}")
+        raise HTTPException(status_code=503, detail="Document search index is temporarily unavailable") from error
 
 
 if __name__ == "__main__":

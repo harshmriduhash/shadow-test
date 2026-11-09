@@ -4,7 +4,7 @@ import os
 
 from redis.asyncio import Redis
 
-from main import SimulationRequest, run_simulation_loop
+from main import SimulationRequest, process_document_job, run_simulation_loop
 
 QUEUE_KEY = "shadowtest:simulations:pending"
 PROCESSING_KEY = "shadowtest:simulations:processing"
@@ -38,8 +38,12 @@ async def run_worker() -> None:
             if payload is None:
                 continue
             try:
-                request = SimulationRequest.model_validate_json(payload)
-                await run_simulation_loop(request)
+                job = json.loads(payload)
+                if job.get("job_type") == "document_index":
+                    await process_document_job(job["document"])
+                else:
+                    request = SimulationRequest.model_validate(job)
+                    await run_simulation_loop(request)
             except Exception as error:
                 print(f"Worker rejected a queued simulation: {error}")
             finally:

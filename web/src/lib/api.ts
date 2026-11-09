@@ -9,6 +9,19 @@ export interface Persona {
     createdAt: string;
 }
 
+export interface CursorPage<T> {
+    items: T[];
+    totalCount: number;
+    nextCursor: string | null;
+    hasMore: boolean;
+}
+
+function pageQuery(cursor?: string, limit = 20) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    return `?${params.toString()}`;
+}
+
 export interface SimulationStep {
     id: string;
     simulationId: string;
@@ -58,6 +71,24 @@ export interface Report {
     };
 }
 
+export interface ProjectDocument {
+    id: string;
+    projectId: string;
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+    status: 'UPLOADING' | 'INDEXING' | 'READY' | 'FAILED';
+    error: string | null;
+    createdAt: string;
+}
+
+export interface DocumentSearchResult {
+    document_id: string;
+    file_name: string;
+    text: string;
+    score: number;
+}
+
 export interface PlanOverview {
     plan: 'FREE' | 'STARTER' | 'PRO';
     limits: { projects: number | null; simulationsPerMonth: number };
@@ -91,17 +122,17 @@ export function authOptions(token: string | null): RequestInit {
 
 export const api = {
     projects: {
-        list: (options?: RequestInit) => fetcher<Project[]>('/projects', options),
+        list: (options?: RequestInit, cursor?: string, limit?: number) => fetcher<CursorPage<Project>>(`/projects${pageQuery(cursor, limit)}`, options),
         get: (id: string, options?: RequestInit) => fetcher<Project>(`/projects/${encodeURIComponent(id)}`, options),
         create: (data: Pick<Project, 'name' | 'description' | 'productUrl' | 'repoUrl'>, options?: RequestInit) =>
             fetcher<Project>(`/projects`, { ...options, method: 'POST', body: JSON.stringify(data) }),
         update: (id: string, data: Partial<Pick<Project, 'name' | 'description' | 'productUrl' | 'repoUrl'>>, options?: RequestInit) =>
             fetcher<Project>(`/projects/${encodeURIComponent(id)}`, { ...options, method: 'PATCH', body: JSON.stringify(data) }),
-        getSimulations: (id: string, options?: RequestInit) =>
-            fetcher<Simulation[]>(`/projects/${encodeURIComponent(id)}/simulations`, options),
+        getSimulations: (id: string, options?: RequestInit, cursor?: string) =>
+            fetcher<CursorPage<Simulation>>(`/projects/${encodeURIComponent(id)}/simulations${pageQuery(cursor)}`, options),
     },
     simulations: {
-        list: (options?: RequestInit) => fetcher<Simulation[]>('/simulations', options),
+        list: (options?: RequestInit, cursor?: string) => fetcher<CursorPage<Simulation>>(`/simulations${pageQuery(cursor)}`, options),
         start: (data: Pick<Simulation, 'projectId' | 'personaId' | 'task'>, options?: RequestInit) =>
             fetcher<Simulation>('/simulations/start', { ...options, method: 'POST', body: JSON.stringify(data) }),
         retry: (id: string, options?: RequestInit) =>
@@ -110,8 +141,8 @@ export const api = {
             fetcher<SimulationStep[]>(`/simulations/${encodeURIComponent(id)}/steps`, options),
     },
     personas: {
-        list: (projectId: string, options?: RequestInit) =>
-            fetcher<Persona[]>(`/projects/${encodeURIComponent(projectId)}/personas`, options),
+        list: (projectId: string, options?: RequestInit, cursor?: string) =>
+            fetcher<CursorPage<Persona>>(`/projects/${encodeURIComponent(projectId)}/personas${pageQuery(cursor)}`, options),
         create: (projectId: string, data: Pick<Persona, 'name' | 'traits'>, options?: RequestInit) =>
             fetcher<Persona>(`/projects/${encodeURIComponent(projectId)}/personas`, { ...options, method: 'POST', body: JSON.stringify(data) }),
         update: (id: string, data: Partial<Pick<Persona, 'name' | 'traits'>>, options?: RequestInit) =>
@@ -119,8 +150,33 @@ export const api = {
         delete: (id: string, options?: RequestInit) =>
             fetcher<void>(`/personas/${encodeURIComponent(id)}`, { ...options, method: 'DELETE' }),
     },
+    documents: {
+        list: (projectId: string, options?: RequestInit, cursor?: string) =>
+            fetcher<CursorPage<ProjectDocument>>(`/projects/${encodeURIComponent(projectId)}/documents${pageQuery(cursor)}`, options),
+        search: (projectId: string, query: string, options?: RequestInit) =>
+            fetcher<{ results: DocumentSearchResult[] }>(
+                `/projects/${encodeURIComponent(projectId)}/documents/search`,
+                { ...options, method: 'POST', body: JSON.stringify({ query }) }
+            ),
+        createUpload: (projectId: string, data: Pick<ProjectDocument, 'fileName' | 'contentType' | 'sizeBytes'>, options?: RequestInit) =>
+            fetcher<{ document: ProjectDocument; upload: { url: string; fields: Record<string, string> } }>(
+                `/projects/${encodeURIComponent(projectId)}/documents`,
+                { ...options, method: 'POST', body: JSON.stringify(data) }
+            ),
+        completeUpload: (projectId: string, documentId: string, options?: RequestInit) =>
+            fetcher<{ id: string; status: ProjectDocument['status'] }>(
+                `/projects/${encodeURIComponent(projectId)}/documents/${encodeURIComponent(documentId)}/complete`,
+                { ...options, method: 'POST', body: JSON.stringify({}) }
+            ),
+        download: async (id: string, options?: RequestInit) => {
+            const result = await fetcher<{ url: string }>(`/documents/${encodeURIComponent(id)}/download`, options);
+            return result.url;
+        },
+        delete: (id: string, options?: RequestInit) =>
+            fetcher<void>(`/documents/${encodeURIComponent(id)}`, { ...options, method: 'DELETE' }),
+    },
     reports: {
-        list: (options?: RequestInit) => fetcher<Report[]>('/reports', options),
+        list: (options?: RequestInit, cursor?: string) => fetcher<CursorPage<Report>>(`/reports${pageQuery(cursor)}`, options),
         get: (id: string, options?: RequestInit) => fetcher<Report>(`/reports/${encodeURIComponent(id)}`, options),
     },
     billing: {

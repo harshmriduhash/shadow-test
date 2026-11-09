@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useOrganization } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
 import { api, authOptions, type Persona, type Project } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 export default function PersonasPage() {
     const { getToken } = useAuth();
+    const { organization } = useOrganization();
     const [projects, setProjects] = useState<Project[]>([]);
     const [personas, setPersonas] = useState<Persona[]>([]);
     const [projectId, setProjectId] = useState("");
@@ -17,23 +18,53 @@ export default function PersonasPage() {
     const [name, setName] = useState("");
     const [traits, setTraits] = useState("");
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [personaCursors, setPersonaCursors] = useState<Record<string, string | null>>({});
+    const [totalPersonas, setTotalPersonas] = useState(0);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
 
     const load = useCallback(async () => {
         const options = authOptions(await getToken());
-        const ownedProjects = await api.projects.list(options);
+        const ownedProjects = (await api.projects.list(options, undefined, 100)).items;
         const profiles = await Promise.all(ownedProjects.map(project => api.personas.list(project.id, options)));
         setProjects(ownedProjects);
-        setPersonas(profiles.flat());
-        setProjectId(current => current || ownedProjects[0]?.id || "");
+        setPersonas(profiles.flatMap(page => page.items));
+        setPersonaCursors(Object.fromEntries(ownedProjects.map((project, index) => [project.id, profiles[index].nextCursor])));
+        setTotalPersonas(profiles.reduce((total, page) => total + page.totalCount, 0));
+        setProjectId(current => ownedProjects.some(project => project.id === current) ? current : ownedProjects[0]?.id || "");
     }, [getToken]);
 
     useEffect(() => {
         void load()
             .catch(loadError => setError(loadError instanceof Error ? loadError.message : "Unable to load personas."))
             .finally(() => setLoading(false));
-    }, [load]);
+    }, [load, organization?.id]);
+
+    const loadMore = async () => {
+        setLoadingMore(true);
+        setError("");
+        try {
+            const options = authOptions(await getToken());
+            const pages = await Promise.all(projects.flatMap(project => {
+                const cursor = personaCursors[project.id];
+                return cursor ? [api.personas.list(project.id, options, cursor)] : [];
+            }));
+            setPersonas(current => [...current, ...pages.flatMap(page => page.items)]);
+            setPersonaCursors(current => {
+                const updated = { ...current };
+                let pageIndex = 0;
+                for (const project of projects) {
+                    if (current[project.id]) updated[project.id] = pages[pageIndex++]?.nextCursor || null;
+                }
+                return updated;
+            });
+        } catch (loadError) {
+            setError(loadError instanceof Error ? loadError.message : "Unable to load more personas.");
+        } finally {
+            setLoadingMore(false);
+        }
+    };
 
     const resetForm = () => {
         setEditingId("");
@@ -119,7 +150,7 @@ export default function PersonasPage() {
                 </form>
             </section>
             <section className="space-y-4">
-                <h2 className="text-lg font-semibold text-white">Saved personas</h2>
+                <h2 className="text-lg font-semibold text-white">Saved personas · {personas.length} of {totalPersonas}</h2>
                 {loading ? <p className="text-sm text-zinc-500">Loading personas…</p> : personas.map(persona => (
                     <article key={persona.id} className="flex items-start justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.02] p-5">
                         <div>
@@ -134,6 +165,11 @@ export default function PersonasPage() {
                     </article>
                 ))}
                 {!loading && personas.length === 0 && <p className="rounded-xl border border-white/10 p-6 text-sm text-zinc-500">Your projects’ default personas will appear here.</p>}
+                {!loading && Object.values(personaCursors).some(Boolean) && (
+                    <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
+                        {loadingMore ? "Loading…" : "Load more personas"}
+                    </Button>
+                )}
             </section>
         </div>
     );

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import socket
 from types import SimpleNamespace
 import unittest
@@ -254,6 +255,44 @@ class SimulationQueueTests(unittest.TestCase):
             main.SimulationRequest.model_validate_json(fake_redis.payloads[0][1]).simulation_id,
             "simulation",
         )
+
+    def test_document_index_jobs_are_queued_with_a_job_type(self):
+        class FakeRedis:
+            async def ping(self):
+                return True
+
+            async def rpush(self, key, payload):
+                self.payload = json.loads(payload)
+
+        request = main.DocumentIndexRequest(
+            document_id="document",
+            project_id="project",
+            storage_key="private/key",
+            content_type="text/plain",
+            file_name="guide.txt",
+        )
+        fake_redis = FakeRedis()
+        with (
+            patch.object(main, "REDIS_URL", "redis://queue"),
+            patch.object(main, "redis_client", fake_redis),
+        ):
+            enqueued = asyncio.run(main.enqueue_document_index(request))
+
+        self.assertTrue(enqueued)
+        self.assertEqual(fake_redis.payload["job_type"], "document_index")
+        self.assertEqual(fake_redis.payload["document"]["document_id"], "document")
+
+    def test_document_index_job_updates_ready_after_successful_index(self):
+        details = ("document", "project", "private/key", "text/plain", "guide.txt")
+        with (
+            patch.object(main, "document_index_payload", return_value=details),
+            patch.object(main.asyncio, "to_thread", new=AsyncMock(return_value=4)) as index,
+            patch.object(main, "update_document_status", new=AsyncMock()) as update,
+        ):
+            asyncio.run(main.process_document_job({"document_id": "document"}))
+
+        index.assert_awaited_once_with(main.index_document, *details)
+        update.assert_awaited_once_with("document", "READY")
 
     def test_worker_recovers_jobs_left_in_processing(self):
         class FakeRedis:

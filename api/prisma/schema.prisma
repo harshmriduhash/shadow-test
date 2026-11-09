@@ -21,6 +21,7 @@ model User {
 model Project {
   id          String   @id @default(cuid())
   userId      String
+  organizationId String? @map("organization_id")
   name        String
   description String?
   repoUrl     String?  @map("repo_url")
@@ -30,8 +31,28 @@ model Project {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   personas    Persona[]
   simulations Simulation[]
+  documents   ProjectDocument[]
 
   @@index([userId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model ProjectDocument {
+  id            String   @id @default(cuid())
+  projectId     String
+  fileName      String   @map("file_name")
+  contentType   String   @map("content_type")
+  sizeBytes     Int      @map("size_bytes")
+  storageKey    String   @unique @map("storage_key")
+  status        String   @default("UPLOADING")
+  error         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([projectId, status])
 }
 
 model Persona {

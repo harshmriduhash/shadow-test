@@ -5,6 +5,7 @@ import { rateLimit } from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import { createClient } from 'redis';
 import { billingRouter, stripeWebhookHandler } from './billing';
+import { createApiResponseCache } from './cache';
 import apiRoutes from './routes';
 
 dotenv.config();
@@ -42,6 +43,7 @@ const apiRateLimit = rateLimit({
 app.post('/api/billing/webhook', apiRateLimit, express.raw({ type: 'application/json' }), stripeWebhookHandler);
 app.use(express.json({ limit: '1mb' }));
 app.use(apiRateLimit);
+app.use('/api', createApiResponseCache(redisClient));
 
 app.use('/api', apiRoutes);
 app.use('/api/billing', billingRouter);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useOrganization } from "@clerk/nextjs";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -26,8 +26,13 @@ function csvCell(value: string | number) {
 
 export default function ReportsPage() {
     const { isLoaded, userId, getToken } = useAuth();
+    const { organization } = useOrganization();
     const [reports, setReports] = useState<Report[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [exporting, setExporting] = useState(false);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [totalCount, setTotalCount] = useState(0);
     const [error, setError] = useState("");
 
     useEffect(() => {
@@ -35,8 +40,12 @@ export default function ReportsPage() {
         let cancelled = false;
         void (async () => {
             try {
-                const result = await api.reports.list(authOptions(await getToken()));
-                if (!cancelled) setReports(result);
+                const page = await api.reports.list(authOptions(await getToken()));
+                if (!cancelled) {
+                    setReports(page.items);
+                    setNextCursor(page.nextCursor);
+                    setTotalCount(page.totalCount);
+                }
             } catch (loadError) {
                 if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load reports.");
             } finally {
@@ -44,23 +53,54 @@ export default function ReportsPage() {
             }
         })();
         return () => { cancelled = true; };
-    }, [getToken, isLoaded, userId]);
+    }, [getToken, isLoaded, organization?.id, userId]);
+
+    const loadMore = async () => {
+        if (!nextCursor) return;
+        setLoadingMore(true);
+        setError("");
+        try {
+            const page = await api.reports.list(authOptions(await getToken()), nextCursor);
+            setReports(current => [...current, ...page.items]);
+            setNextCursor(page.nextCursor);
+        } catch (loadError) {
+            setError(loadError instanceof Error ? loadError.message : "Unable to load more reports.");
+        } finally {
+            setLoadingMore(false);
+        }
+    };
 
     const metrics = useMemo(() => {
         const knownOutcomes = reports.filter(report => typeof report.simulation.success === "boolean");
         const successes = knownOutcomes.filter(report => report.simulation.success).length;
         const frictionCount = reports.reduce((total, report) => total + readInsights(report.insights).items.length, 0);
         return {
-            total: reports.length,
+            total: totalCount,
             successRate: knownOutcomes.length ? Math.round((successes / knownOutcomes.length) * 100) : null,
             frictionCount
         };
-    }, [reports]);
+    }, [reports, totalCount]);
 
-    const exportCsv = () => {
+    const exportCsv = async () => {
+        setExporting(true);
+        setError("");
+        let allReports: Report[];
+        try {
+            const options = authOptions(await getToken());
+            let page = await api.reports.list(options);
+            allReports = [...page.items];
+            while (page.nextCursor) {
+                page = await api.reports.list(options, page.nextCursor);
+                allReports.push(...page.items);
+            }
+        } catch (exportError) {
+            setError(exportError instanceof Error ? exportError.message : "Unable to export reports.");
+            setExporting(false);
+            return;
+        }
         const rows = [
             ["Project", "Persona", "Task", "Status", "Successful", "Summary", "Insights", "Created at"],
-            ...reports.map(report => [
+            ...allReports.map(report => [
                 report.simulation.project.name,
                 report.simulation.persona.name,
                 report.simulation.task,
@@ -78,6 +118,7 @@ export default function ReportsPage() {
         anchor.download = "shadowtest-reports.csv";
         anchor.click();
         URL.revokeObjectURL(url);
+        setExporting(false);
     };
 
     return (
@@ -87,18 +128,20 @@ export default function ReportsPage() {
                     <h1 className="text-4xl font-bold tracking-tight text-white">Reports</h1>
                     <p className="mt-2 text-sm text-zinc-400">Outcomes and friction insights from your completed simulations.</p>
                 </div>
-                <Button variant="outline" onClick={exportCsv} disabled={!reports.length}>Export CSV</Button>
+                <Button variant="outline" onClick={() => void exportCsv()} disabled={!reports.length || exporting}>
+                    {exporting ? "Preparing…" : "Export all CSV"}
+                </Button>
             </header>
             {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
 
             <div className="grid gap-4 md:grid-cols-3">
                 <Card><CardHeader><CardTitle>Total reports</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.total}</p></CardContent></Card>
-                <Card><CardHeader><CardTitle>Task success rate</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.successRate === null ? "—" : `${metrics.successRate}%`}</p></CardContent></Card>
-                <Card><CardHeader><CardTitle>Friction insights</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.frictionCount}</p></CardContent></Card>
+                <Card><CardHeader><CardTitle>Task success rate (loaded)</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.successRate === null ? "—" : `${metrics.successRate}%`}</p></CardContent></Card>
+                <Card><CardHeader><CardTitle>Friction insights (loaded)</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.frictionCount}</p></CardContent></Card>
             </div>
 
             <section className="space-y-4">
-                <h2 className="text-lg font-semibold text-white">Recent reports</h2>
+                <h2 className="text-lg font-semibold text-white">Reports · {reports.length} of {totalCount}</h2>
                 {loading && <p className="text-sm text-zinc-500">Loading reports…</p>}
                 {!loading && reports.map(report => {
                     const insights = readInsights(report.insights);
@@ -126,6 +169,11 @@ export default function ReportsPage() {
                     );
                 })}
                 {!loading && reports.length === 0 && <p className="rounded-xl border border-white/10 p-6 text-sm text-zinc-500">Reports will appear here after your first simulation completes.</p>}
+                {!loading && nextCursor && (
+                    <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
+                        {loadingMore ? "Loading…" : "Load more reports"}
+                    </Button>
+                )}
             </section>
         </div>
     );

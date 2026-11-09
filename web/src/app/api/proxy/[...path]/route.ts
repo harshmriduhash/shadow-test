@@ -9,7 +9,9 @@ async function proxyRequest(request: NextRequest, path: string[]) {
         return NextResponse.json({ error: 'This API method is not supported.' }, { status: 405 });
     }
 
-    const apiBase = process.env.API_SERVER_URL || process.env.NEXT_PUBLIC_API_URL;
+    const apiBase = process.env.API_SERVER_URL
+        || process.env.NEXT_PUBLIC_API_URL
+        || 'https://shadowtest-api.onrender.com/api';
     if (!apiBase) {
         return NextResponse.json(
             { error: 'The application API is not configured. Set API_SERVER_URL in the web deployment environment.' },

@@ -4,6 +4,8 @@ const {
     personaCreateSchema,
     projectCreateSchema,
     projectUpdateSchema,
+    documentSearchSchema,
+    documentUploadSchema,
     simulationReportSchema,
     simulationStartSchema,
     simulationStatusSchema,
@@ -74,6 +76,30 @@ test('simulation reports require a summary, bounded insight list, and outcome', 
         success: false
     }).success, true);
     assert.equal(simulationReportSchema.safeParse({ summary: '', insights: [], success: false }).success, false);
+});
+
+test('document uploads accept bounded PDF and text files only', () => {
+    assert.equal(documentUploadSchema.safeParse({
+        fileName: 'guide.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 1024
+    }).success, true);
+    assert.equal(documentUploadSchema.safeParse({
+        fileName: 'large.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 10 * 1024 * 1024 + 1
+    }).success, false);
+    assert.equal(documentUploadSchema.safeParse({
+        fileName: 'script.exe',
+        contentType: 'application/octet-stream',
+        sizeBytes: 1024
+    }).success, false);
+});
+
+test('semantic document searches require a bounded non-empty query', () => {
+    assert.equal(documentSearchSchema.safeParse({ query: 'Where are invoices?' }).success, true);
+    assert.equal(documentSearchSchema.safeParse({ query: '  ' }).success, false);
+    assert.equal(documentSearchSchema.safeParse({ query: 'x'.repeat(2001) }).success, false);
 });
 
 test('new accounts use free plan quotas and UTC month usage', async () => {

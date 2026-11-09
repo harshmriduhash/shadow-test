@@ -54,3 +54,23 @@ export const simulationStepSchema = z.object({
     action: z.string().max(8000).optional(),
     outcome: z.string().max(8000).optional()
 }).refine(value => Object.keys(value).some(key => key !== 'step_number'));
+
+export const documentUploadSchema = z.object({
+    fileName: z.string().trim().min(1).max(255),
+    contentType: z.enum(['application/pdf', 'text/markdown', 'text/plain']),
+    sizeBytes: z.number().int().positive().max(10 * 1024 * 1024)
+});
+
+export const documentStatusSchema = z.object({
+    status: z.enum(['INDEXING', 'READY', 'FAILED']),
+    error: z.string().max(1000).optional()
+});
+
+export const documentSearchSchema = z.object({
+    query: z.string().trim().min(1).max(2000)
+});
+
+export const paginationSchema = z.object({
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    cursor: z.string().trim().min(1).optional()
+});

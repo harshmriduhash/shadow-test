@@ -1,7 +1,7 @@
 "use client";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useOrganization } from "@clerk/nextjs";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,34 +12,53 @@ import { motion } from "framer-motion";
 
 export default function DashboardPage() {
     const { isLoaded, userId, getToken } = useAuth();
+    const { organization } = useOrganization();
     const [projects, setProjects] = useState<Project[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [totalCount, setTotalCount] = useState(0);
     const [error, setError] = useState("");
+
+    const loadProjects = useCallback(async (cursor?: string) => {
+        const result = await api.projects.list(authOptions(await getToken()), cursor);
+        setProjects(current => cursor ? [...current, ...result.items] : result.items);
+        setNextCursor(result.nextCursor);
+        setTotalCount(result.totalCount);
+    }, [getToken]);
 
     useEffect(() => {
         if (!isLoaded || !userId) return;
         let cancelled = false;
-        const loadProjects = async () => {
-            try {
-                const token = await getToken();
-                const result = await api.projects.list(authOptions(token));
-                if (!cancelled) setProjects(result);
-            } catch (loadError) {
+        void loadProjects()
+            .catch(loadError => {
                 if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load projects.");
-            } finally {
+            })
+            .finally(() => {
                 if (!cancelled) setLoading(false);
-            }
-        };
-        void loadProjects();
+            });
         return () => { cancelled = true; };
-    }, [getToken, isLoaded, userId]);
+    }, [getToken, isLoaded, loadProjects, organization?.id, userId]);
+
+    const loadMore = async () => {
+        if (!nextCursor) return;
+        setLoadingMore(true);
+        setError("");
+        try {
+            await loadProjects(nextCursor);
+        } catch (loadError) {
+            setError(loadError instanceof Error ? loadError.message : "Unable to load more projects.");
+        } finally {
+            setLoadingMore(false);
+        }
+    };
 
     return (
         <div className="flex flex-col gap-10">
             <div className="flex items-end justify-between">
                 <div className="space-y-1">
                     <h1 className="text-4xl font-bold tracking-tighter text-white">Infrastructure</h1>
-                    <p className="text-zinc-500 font-mono text-xs uppercase tracking-widest">Active Neural Projects / Global Scope</p>
+                    <p className="text-zinc-500 font-mono text-xs uppercase tracking-widest">Projects · {projects.length} of {totalCount}</p>
                 </div>
                 <Link href="/dashboard/projects/new">
                     <Button className="bg-primary text-primary-foreground shadow-[0_0_20px_rgba(16,185,129,0.2)] hover:shadow-[0_0_30px_rgba(16,185,129,0.4)] transition-all rounded-xl h-12 px-6">
@@ -127,6 +146,13 @@ export default function DashboardPage() {
                             </Card>
                         </motion.div>
                     ))}
+                </div>
+            )}
+            {!loading && nextCursor && (
+                <div className="flex justify-center">
+                    <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
+                        {loadingMore ? "Loading…" : "Load more projects"}
+                    </Button>
                 </div>
             )}
         </div>

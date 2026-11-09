@@ -8,6 +8,8 @@ declare global {
             auth?: {
                 userId: string;
                 email?: string;
+                organizationId?: string;
+                organizationRole?: string;
             };
         }
     }
@@ -25,7 +27,12 @@ function getJwks() {
     return remoteJwks;
 }
 
-export async function verifySessionToken(token: string): Promise<{ userId: string; email?: string }> {
+export async function verifySessionToken(token: string): Promise<{
+    userId: string;
+    email?: string;
+    organizationId?: string;
+    organizationRole?: string;
+}> {
     const verificationOptions: { issuer?: string; audience?: string } = {};
     if (process.env.CLERK_ISSUER_URL) verificationOptions.issuer = process.env.CLERK_ISSUER_URL;
     if (process.env.CLERK_JWT_AUDIENCE) verificationOptions.audience = process.env.CLERK_JWT_AUDIENCE;
@@ -35,7 +42,14 @@ export async function verifySessionToken(token: string): Promise<{ userId: strin
     if (!userId) throw new Error('Session token is missing its subject');
 
     const email = getEmail(payload);
-    return email ? { userId, email } : { userId };
+    const organizationId = typeof payload.org_id === 'string' ? payload.org_id : undefined;
+    const organizationRole = typeof payload.org_role === 'string' ? payload.org_role : undefined;
+    return {
+        userId,
+        ...(email ? { email } : {}),
+        ...(organizationId ? { organizationId } : {}),
+        ...(organizationRole ? { organizationRole } : {})
+    };
 }
 
 function getEmail(payload: JWTPayload): string | undefined {

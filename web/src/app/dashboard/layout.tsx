@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { LayoutDashboard, Users, Activity, FileText, Settings, Search, Cpu } from "lucide-react";
-import { UserButton } from "@clerk/nextjs";
+import { LayoutDashboard, Users, Activity, FileText, Settings, Search, Cpu, Building2 } from "lucide-react";
+import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
 
@@ -33,6 +33,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                                 { href: "/dashboard/personas", label: "Personas", icon: Users },
                                 { href: "/dashboard/simulations", label: "Simulations", icon: Activity },
                                 { href: "/dashboard/reports", label: "Reports", icon: FileText },
+                                { href: "/dashboard/team", label: "Team", icon: Building2 },
                             ].map((item) => (
                                 <li key={item.href}>
                                     <Link 
@@ -71,6 +72,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                             />
                         </div>
                         <div className="flex items-center gap-6">
+                            <OrganizationSwitcher
+                                afterCreateOrganizationUrl="/dashboard"
+                                afterSelectOrganizationUrl="/dashboard"
+                                appearance={{
+                                    elements: {
+                                        rootBox: "text-zinc-300",
+                                        organizationSwitcherTrigger: "rounded-xl border border-white/10 bg-zinc-900/50 px-3 py-2"
+                                    }
+                                }}
+                            />
                             <div className="flex items-center gap-2">
                                 <div className="h-2 w-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
                                 <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">Engine Active</span>

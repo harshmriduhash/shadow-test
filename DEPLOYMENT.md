@@ -31,7 +31,9 @@ database schema matches it and baseline the migration with Prisma's
 1. Import the repository and set `web` as the Vercel root directory.
 2. Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` for the
    production Clerk instance.
-3. Set `API_SERVER_URL` to the public Render API URL followed by `/api`.
+3. Optionally set `API_SERVER_URL` to the public Render API URL followed by
+   `/api`. When omitted, the web app uses the Render URL assigned to the
+   `shadowtest-api` service in `render.yaml`.
    Set `NEXT_PUBLIC_CONTACT_EMAIL` to the mailbox that should receive contact
    inquiries; the contact form opens a prefilled email draft in the visitor's
    email client and does not send or store the message itself.
@@ -45,6 +47,31 @@ database schema matches it and baseline the migration with Prisma's
 See the service-specific `.env.example` files for local development variables.
 Never commit real `.env` files or place secret values in `NEXT_PUBLIC_*`
 variables.
+
+## Document search and team setup
+
+1. Enable Organizations in Clerk. Members use the dashboard organization
+   switcher; projects created while an organization is selected are visible to
+   that organization's authenticated members. The Clerk organization profile
+   handles invitations and membership.
+2. Create a private S3 bucket and set `AWS_S3_BUCKET`, `AWS_REGION`,
+   `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` on the API, AI service, and
+   worker. Grant the key only `s3:GetObject`, `s3:PutObject`, and
+   `s3:DeleteObject` for that bucket.
+3. Configure bucket CORS to allow `POST` from the exact Vercel application
+   origin. Uploads are limited to 10 MB PDF, Markdown, or plain-text files.
+4. Create a Qdrant Cloud collection endpoint and set `QDRANT_URL` and
+   `QDRANT_API_KEY` on the AI service and worker. The service creates its
+   collection and embeds documents with FastEmbed on first use; the first
+   indexing job downloads the embedding model.
+5. Apply the new database migration during deployment. Existing installations
+   must follow the migration-baselining warning above before enabling deploy
+   migrations.
+
+The web application defaults to `https://shadowtest-api.onrender.com/api`,
+which is the public hostname Render assigns to the blueprint's `shadowtest-api`
+service. If Render displays a different public API hostname, set
+`API_SERVER_URL` in Vercel to that exact hostname plus `/api` and redeploy.
 
 ## 3. Optional billing setup
 

@@ -1,7 +1,7 @@
 "use client";
 import { useAuth } from "@clerk/nextjs";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { ArrowLeft, Play, UserCircle2, CheckCircle2, Clock, XCircle, Activity, L
 import { api, authOptions, type Persona, type Project, type Simulation } from "@/lib/api";
 import { AIThinking } from "@/components/ai-thinking";
 import { motion, AnimatePresence } from "framer-motion";
+import { ProjectDocuments } from "./documents";
 
 export default function ProjectDetailsPage() {
     const { getToken } = useAuth();
@@ -20,8 +21,13 @@ export default function ProjectDetailsPage() {
     const [project, setProject] = useState<Project | null>(null);
     const [personas, setPersonas] = useState<Persona[]>([]);
     const [simulations, setSimulations] = useState<Simulation[]>([]);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [totalSimulations, setTotalSimulations] = useState(0);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const loadedProjectId = useRef<string | null>(null);
+    const hasLoadedMore = useRef(false);
 
     // Launch Form State
     const [selectedPersona, setSelectedPersona] = useState("");
@@ -32,12 +38,29 @@ export default function ProjectDetailsPage() {
         try {
             setError("");
             const options = authOptions(await getToken());
+            const isNewProject = loadedProjectId.current !== id;
+            if (isNewProject) {
+                loadedProjectId.current = id;
+                hasLoadedMore.current = false;
+                setSimulations([]);
+                setNextCursor(null);
+                setTotalSimulations(0);
+            }
             const [projData, simData] = await Promise.all([
                 api.projects.get(id, options),
                 api.projects.getSimulations(id, options)
             ]);
             setProject(projData);
-            setSimulations(simData);
+            setSimulations(current => {
+                if (isNewProject) return simData.items;
+                const byId = new Map(current.map(simulation => [simulation.id, simulation]));
+                simData.items.forEach(simulation => byId.set(simulation.id, simulation));
+                return Array.from(byId.values()).sort((left, right) =>
+                    new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+                );
+            });
+            if (!hasLoadedMore.current) setNextCursor(simData.nextCursor);
+            setTotalSimulations(simData.totalCount);
             setPersonas(projData.personas || []);
             const projectPersonas = projData.personas || [];
             if (projectPersonas.length > 0 && !selectedPersona) {
@@ -49,6 +72,29 @@ export default function ProjectDetailsPage() {
             setLoading(false);
         }
     }, [getToken, id, selectedPersona]);
+
+    const loadMore = async () => {
+        if (!nextCursor) return;
+        setLoadingMore(true);
+        setError("");
+        try {
+            const page = await api.projects.getSimulations(id, authOptions(await getToken()), nextCursor);
+            setSimulations(current => {
+                const byId = new Map(current.map(simulation => [simulation.id, simulation]));
+                page.items.forEach(simulation => byId.set(simulation.id, simulation));
+                return Array.from(byId.values()).sort((left, right) =>
+                    new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+                );
+            });
+            hasLoadedMore.current = true;
+            setNextCursor(page.nextCursor);
+            setTotalSimulations(page.totalCount);
+        } catch (loadError) {
+            setError(loadError instanceof Error ? loadError.message : "Unable to load more simulations.");
+        } finally {
+            setLoadingMore(false);
+        }
+    };
 
     useEffect(() => {
         fetchData();
@@ -126,6 +172,8 @@ export default function ProjectDetailsPage() {
                     <Button variant="outline" className="rounded-xl border-white/[0.05] hover:bg-white/[0.02] text-zinc-400">Settings</Button>
                 </div>
             </header>
+
+            <ProjectDocuments projectId={id} />
 
             <div className="grid lg:grid-cols-12 gap-8">
                 {/* Left Column: Simulation Launcher */}
@@ -287,7 +335,7 @@ export default function ProjectDetailsPage() {
                     <Card className="rounded-3xl border-white/[0.05] bg-zinc-900/10">
                         <CardHeader className="flex flex-row items-center justify-between border-b border-white/[0.05] py-6 px-8">
                             <div>
-                                <CardTitle className="text-lg text-white">Historical Logs</CardTitle>
+                                <CardTitle className="text-lg text-white">Historical Logs · {simulations.length} of {totalSimulations}</CardTitle>
                                 <CardDescription className="text-zinc-500 font-mono text-[10px] uppercase tracking-widest mt-1">Previous Compute Iterations</CardDescription>
                             </div>
                             <Activity className="h-5 w-5 text-zinc-700" />
@@ -316,6 +364,13 @@ export default function ProjectDetailsPage() {
                                     </div>
                                 ))}
                                 {simulations.length === 0 && <p className="text-sm text-center text-zinc-600 py-10 font-mono tracking-widest">NO LOGS AVAILABLE</p>}
+                                {nextCursor && (
+                                    <div className="flex justify-center pt-4">
+                                        <Button variant="outline" onClick={() => void loadMore()} disabled={loadingMore}>
+                                            {loadingMore ? "Loading…" : "Load more simulations"}
+                                        </Button>
+                                    </div>
+                                )}
                             </div>
                         </CardContent>
                     </Card>

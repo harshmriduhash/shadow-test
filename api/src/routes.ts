@@ -1,12 +1,37 @@
 import { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { randomUUID } from 'node:crypto';
 import { requireInternalAuth, requireSession } from './security';
-import { personaCreateSchema, personaUpdateSchema, projectCreateSchema, projectUpdateSchema, simulationReportSchema, simulationStartSchema, simulationStatusSchema, simulationStepSchema } from './schemas';
+import { documentSearchSchema, documentStatusSchema, documentUploadSchema, paginationSchema, personaCreateSchema, personaUpdateSchema, projectCreateSchema, projectUpdateSchema, simulationReportSchema, simulationStartSchema, simulationStatusSchema, simulationStepSchema } from './schemas';
 import { getPlanUsage } from './plans';
+import { cursorArgs, cursorPage } from './pagination';
 
 const prisma = new PrismaClient();
 const router = Router();
 const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://localhost:8000';
+const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+let s3Client: S3Client | undefined;
+
+function getS3Config() {
+    const bucket = process.env.AWS_S3_BUCKET;
+    if (!bucket || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+        throw new SimulationServiceError('S3 document storage is not configured', 503);
+    }
+    return {
+        bucket,
+        client: s3Client ??= new S3Client({
+            region: process.env.AWS_REGION || 'us-east-1',
+            ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT, forcePathStyle: true } : {})
+        })
+    };
+}
+
+function sanitizedFileName(fileName: string) {
+    return fileName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 180) || 'document';
+}
 
 class SimulationServiceError extends Error {
     constructor(message: string, readonly statusCode: number) {
@@ -38,6 +63,17 @@ async function ensureUser(req: Request) {
         update: req.auth.email ? { email: req.auth.email } : {}
     });
     return req.auth.userId;
+}
+
+function projectScopeWhere(req: Request): Prisma.ProjectWhereInput {
+    const userId = req.auth?.userId;
+    if (!userId) throw new Error('Authenticated user context is missing');
+    return {
+        OR: [
+            { userId },
+            ...(req.auth?.organizationId ? [{ organizationId: req.auth.organizationId }] : [])
+        ]
+    };
 }
 
 async function dispatchSimulation(
@@ -128,6 +164,16 @@ router.patch('/simulations/:id', requireInternalAuth, asyncHandler(async (req, r
     res.json(simulation);
 }));
 
+router.patch('/documents/:id/status', requireInternalAuth, asyncHandler(async (req, res) => {
+    const parsed = documentStatusSchema.safeParse(req.body);
+    if (!parsed.success) return invalid(res, 'Invalid document status', parsed.error.issues);
+    const document = await prisma.projectDocument.update({
+        where: { id: routeParam(req, 'id') },
+        data: { status: parsed.data.status, error: parsed.data.error || null }
+    });
+    res.json(document);
+}));
+
 router.post('/simulations/:id/steps', requireInternalAuth, asyncHandler(async (req, res) => {
     const parsed = simulationStepSchema.safeParse(req.body);
     if (!parsed.success) return invalid(res, 'Invalid simulation step', parsed.error.issues);
@@ -165,14 +211,221 @@ router.post('/simulations/:id/report', requireInternalAuth, asyncHandler(async (
 
 router.use(requireSession);
 
-router.get('/projects', asyncHandler(async (req, res) => {
-    const userId = await ensureUser(req);
-    const projects = await prisma.project.findMany({
-        where: { userId },
-        include: { _count: { select: { simulations: true } } },
-        orderBy: { createdAt: 'desc' }
+router.get('/projects/:projectId/documents', asyncHandler(async (req, res) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return invalid(res, 'Invalid pagination parameters', pagination.error.issues);
+    const project = await prisma.project.findFirst({
+        where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) },
+        select: { id: true }
     });
-    res.json(projects);
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    const where = { projectId: project.id };
+    const [documents, totalCount] = await Promise.all([prisma.projectDocument.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: pagination.data.limit + 1,
+        ...cursorArgs(pagination.data.cursor),
+        select: { id: true, projectId: true, fileName: true, contentType: true, sizeBytes: true, status: true, error: true, createdAt: true }
+    }), prisma.projectDocument.count({ where })]);
+    res.json(cursorPage(documents, pagination.data.limit, totalCount));
+}));
+
+router.post('/projects/:projectId/documents/search', asyncHandler(async (req, res) => {
+    const parsed = documentSearchSchema.safeParse(req.body);
+    if (!parsed.success) return invalid(res, 'Invalid document search query', parsed.error.issues);
+    const project = await prisma.project.findFirst({
+        where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) },
+        select: { id: true }
+    });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+    const internalApiKey = process.env.INTERNAL_API_KEY;
+    if (!internalApiKey) return res.status(503).json({ error: 'Document search is not configured.' });
+
+    let response: globalThis.Response;
+    try {
+        response = await fetch(`${AI_ENGINE_URL}/documents/search`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Internal-Api-Key': internalApiKey },
+            body: JSON.stringify({ project_id: project.id, query: parsed.data.query }),
+            signal: AbortSignal.timeout(15_000)
+        });
+    } catch (error) {
+        console.error(`Unable to search project documents for ${project.id}:`, error);
+        return res.status(503).json({ error: 'Document search is temporarily unavailable.' });
+    }
+    if (!response.ok) return res.status(503).json({ error: 'Document search is temporarily unavailable.' });
+    res.json(await response.json());
+}));
+
+router.post('/projects/:projectId/documents', asyncHandler(async (req, res) => {
+    const parsed = documentUploadSchema.safeParse(req.body);
+    if (!parsed.success) return invalid(res, 'Invalid document upload details', parsed.error.issues);
+    const project = await prisma.project.findFirst({
+        where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) },
+        select: { id: true, userId: true, organizationId: true }
+    });
+    if (!project) return res.status(404).json({ error: 'Project not found' });
+
+    let storage: ReturnType<typeof getS3Config>;
+    try {
+        storage = getS3Config();
+    } catch (error) {
+        if (error instanceof SimulationServiceError) return res.status(error.statusCode).json({ error: error.message });
+        throw error;
+    }
+
+    const fileName = sanitizedFileName(parsed.data.fileName);
+    const storageKey = `${project.organizationId || project.userId}/${project.id}/${randomUUID()}/${fileName}`;
+    const document = await prisma.projectDocument.create({
+        data: {
+            projectId: project.id,
+            fileName,
+            contentType: parsed.data.contentType,
+            sizeBytes: parsed.data.sizeBytes,
+            storageKey
+        }
+    });
+    try {
+        const upload = await createPresignedPost(
+            storage.client,
+            {
+                Bucket: storage.bucket,
+                Key: storageKey,
+                Fields: { 'Content-Type': document.contentType },
+                Conditions: [
+                    ['content-length-range', document.sizeBytes, document.sizeBytes],
+                    ['eq', '$Content-Type', document.contentType]
+                ],
+                Expires: 300
+            }
+        );
+        res.status(201).json({
+            document: {
+                id: document.id,
+                projectId: document.projectId,
+                fileName: document.fileName,
+                contentType: document.contentType,
+                sizeBytes: document.sizeBytes,
+                status: document.status,
+                createdAt: document.createdAt
+            },
+            upload
+        });
+    } catch (error) {
+        await prisma.projectDocument.delete({ where: { id: document.id } });
+        throw error;
+    }
+}));
+
+router.post('/projects/:projectId/documents/:documentId/complete', asyncHandler(async (req, res) => {
+    const document = await prisma.projectDocument.findFirst({
+        where: {
+            id: routeParam(req, 'documentId'),
+            projectId: routeParam(req, 'projectId'),
+            project: projectScopeWhere(req)
+        }
+    });
+    if (!document) return res.status(404).json({ error: 'Document not found' });
+    if (document.status !== 'UPLOADING') return res.status(409).json({ error: 'Document upload has already been completed' });
+
+    const storage = getS3Config();
+    let head;
+    try {
+        head = await storage.client.send(new HeadObjectCommand({ Bucket: storage.bucket, Key: document.storageKey }));
+    } catch (error) {
+        console.error(`Unable to verify uploaded document ${document.id}:`, error);
+        return res.status(422).json({ error: 'Uploaded document could not be verified in S3.' });
+    }
+    if (head.ContentLength !== document.sizeBytes || head.ContentLength > MAX_DOCUMENT_BYTES) {
+        return res.status(422).json({ error: 'Uploaded document size did not match the requested size.' });
+    }
+
+    const internalApiKey = process.env.INTERNAL_API_KEY;
+    if (!internalApiKey) return res.status(503).json({ error: 'Document indexing is not configured.' });
+    const updated = await prisma.projectDocument.update({
+        where: { id: document.id },
+        data: { status: 'INDEXING', error: null }
+    });
+    try {
+        const response = await fetch(`${AI_ENGINE_URL}/documents/index`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Internal-Api-Key': internalApiKey },
+            body: JSON.stringify({
+                document_id: document.id,
+                project_id: document.projectId,
+                storage_key: document.storageKey,
+                content_type: document.contentType,
+                file_name: document.fileName
+            }),
+            signal: AbortSignal.timeout(10_000)
+        });
+        if (!response.ok) throw new Error(`Index service returned ${response.status}`);
+    } catch (error) {
+        console.error(`Unable to enqueue document ${document.id}:`, error);
+        await prisma.projectDocument.update({
+            where: { id: document.id },
+            data: { status: 'FAILED', error: 'Unable to queue document indexing. Please retry the upload.' }
+        });
+        return res.status(503).json({ error: 'Document indexing is temporarily unavailable.' });
+    }
+
+    res.status(202).json({ id: updated.id, status: updated.status });
+}));
+
+router.get('/documents/:id/download', asyncHandler(async (req, res) => {
+    const document = await prisma.projectDocument.findFirst({
+        where: { id: routeParam(req, 'id'), project: projectScopeWhere(req) }
+    });
+    if (!document) return res.status(404).json({ error: 'Document not found' });
+    const storage = getS3Config();
+    const downloadUrl = await getSignedUrl(
+        storage.client,
+        new GetObjectCommand({
+            Bucket: storage.bucket,
+            Key: document.storageKey,
+            ResponseContentDisposition: `attachment; filename="${document.fileName}"`
+        }),
+        { expiresIn: 300 }
+    );
+    res.json({ url: downloadUrl });
+}));
+
+router.delete('/documents/:id', asyncHandler(async (req, res) => {
+    const document = await prisma.projectDocument.findFirst({
+        where: { id: routeParam(req, 'id'), project: projectScopeWhere(req) }
+    });
+    if (!document) return res.status(404).json({ error: 'Document not found' });
+
+    const internalApiKey = process.env.INTERNAL_API_KEY;
+    if (!internalApiKey) return res.status(503).json({ error: 'Document search is not configured.' });
+    if (document.status !== 'UPLOADING') {
+        const response = await fetch(`${AI_ENGINE_URL}/documents/${encodeURIComponent(document.id)}`, {
+            method: 'DELETE',
+            headers: { 'X-Internal-Api-Key': internalApiKey },
+            signal: AbortSignal.timeout(10_000)
+        });
+        if (!response.ok) return res.status(503).json({ error: 'Unable to remove document search index.' });
+    }
+
+    const storage = getS3Config();
+    await storage.client.send(new DeleteObjectCommand({ Bucket: storage.bucket, Key: document.storageKey }));
+    await prisma.projectDocument.delete({ where: { id: document.id } });
+    res.status(204).end();
+}));
+
+router.get('/projects', asyncHandler(async (req, res) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return invalid(res, 'Invalid pagination parameters', pagination.error.issues);
+    const userId = await ensureUser(req);
+    const where = projectScopeWhere(req);
+    const [projects, totalCount] = await Promise.all([prisma.project.findMany({
+        where,
+        include: { _count: { select: { simulations: true } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: pagination.data.limit + 1,
+        ...cursorArgs(pagination.data.cursor)
+    }), prisma.project.count({ where })]);
+    res.json(cursorPage(projects, pagination.data.limit, totalCount));
 }));
 
 router.post('/projects', asyncHandler(async (req, res) => {
@@ -200,6 +453,7 @@ router.post('/projects', asyncHandler(async (req, res) => {
             productUrl: productUrl || null,
             repoUrl: repoUrl || null,
             userId,
+            organizationId: req.auth?.organizationId || null,
             personas: {
                 create: [
                     { name: 'Impatient Developer', traits: 'Technical, fast, low patience', behaviorModel: 'claude-sonnet' },
@@ -216,7 +470,7 @@ router.post('/projects', asyncHandler(async (req, res) => {
 router.get('/projects/:projectId', asyncHandler(async (req, res) => {
     const userId = await ensureUser(req);
     const project = await prisma.project.findFirst({
-        where: { id: routeParam(req, 'projectId'), userId },
+        where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) },
         include: { personas: { orderBy: { createdAt: 'asc' } } }
     });
     if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -228,7 +482,7 @@ router.patch('/projects/:projectId', asyncHandler(async (req, res) => {
     if (!parsed.success) return invalid(res, 'Invalid project details', parsed.error.issues);
 
     const userId = await ensureUser(req);
-    const ownedProject = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), userId }, select: { id: true } });
+    const ownedProject = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) }, select: { id: true } });
     if (!ownedProject) return res.status(404).json({ error: 'Project not found' });
 
     if (parsed.data.productUrl !== undefined || parsed.data.repoUrl !== undefined) {
@@ -258,15 +512,20 @@ router.patch('/projects/:projectId', asyncHandler(async (req, res) => {
 }));
 
 router.get('/projects/:projectId/personas', asyncHandler(async (req, res) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return invalid(res, 'Invalid pagination parameters', pagination.error.issues);
     const userId = await ensureUser(req);
-    const project = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), userId }, select: { id: true } });
+    const project = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) }, select: { id: true } });
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const personas = await prisma.persona.findMany({
-        where: { projectId: project.id },
-        orderBy: { createdAt: 'asc' }
-    });
-    res.json(personas);
+    const where = { projectId: project.id };
+    const [personas, totalCount] = await Promise.all([prisma.persona.findMany({
+        where,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: pagination.data.limit + 1,
+        ...cursorArgs(pagination.data.cursor)
+    }), prisma.persona.count({ where })]);
+    res.json(cursorPage(personas, pagination.data.limit, totalCount));
 }));
 
 router.post('/projects/:projectId/personas', asyncHandler(async (req, res) => {
@@ -274,7 +533,7 @@ router.post('/projects/:projectId/personas', asyncHandler(async (req, res) => {
     if (!parsed.success) return invalid(res, 'Invalid persona details', parsed.error.issues);
 
     const userId = await ensureUser(req);
-    const project = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), userId }, select: { id: true } });
+    const project = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) }, select: { id: true } });
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
     const persona = await prisma.persona.create({ data: { ...parsed.data, projectId: project.id } });
@@ -287,7 +546,7 @@ router.patch('/personas/:personaId', asyncHandler(async (req, res) => {
 
     const userId = await ensureUser(req);
     const persona = await prisma.persona.findFirst({
-        where: { id: routeParam(req, 'personaId'), project: { userId } },
+        where: { id: routeParam(req, 'personaId'), project: projectScopeWhere(req) },
         select: { id: true }
     });
     if (!persona) return res.status(404).json({ error: 'Persona not found' });
@@ -298,7 +557,7 @@ router.patch('/personas/:personaId', asyncHandler(async (req, res) => {
 router.delete('/personas/:personaId', asyncHandler(async (req, res) => {
     const userId = await ensureUser(req);
     const persona = await prisma.persona.findFirst({
-        where: { id: routeParam(req, 'personaId'), project: { userId } },
+        where: { id: routeParam(req, 'personaId'), project: projectScopeWhere(req) },
         include: { _count: { select: { simulations: true } } }
     });
     if (!persona) return res.status(404).json({ error: 'Persona not found' });
@@ -309,39 +568,50 @@ router.delete('/personas/:personaId', asyncHandler(async (req, res) => {
 }));
 
 router.get('/projects/:projectId/simulations', asyncHandler(async (req, res) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return invalid(res, 'Invalid pagination parameters', pagination.error.issues);
     const userId = await ensureUser(req);
-    const project = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), userId }, select: { id: true } });
+    const project = await prisma.project.findFirst({ where: { id: routeParam(req, 'projectId'), ...projectScopeWhere(req) }, select: { id: true } });
     if (!project) return res.status(404).json({ error: 'Project not found' });
 
-    const simulations = await prisma.simulation.findMany({
-        where: { projectId: project.id },
+    const where = { projectId: project.id };
+    const [simulations, totalCount] = await Promise.all([prisma.simulation.findMany({
+        where,
         include: { persona: true, steps: { orderBy: { stepNumber: 'asc' } }, reports: true },
-        orderBy: { createdAt: 'desc' },
-        take: 100
-    });
-    res.json(simulations);
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: pagination.data.limit + 1,
+        ...cursorArgs(pagination.data.cursor)
+    }), prisma.simulation.count({ where })]);
+    res.json(cursorPage(simulations, pagination.data.limit, totalCount));
 }));
 
 router.get('/simulations', asyncHandler(async (req, res) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return invalid(res, 'Invalid pagination parameters', pagination.error.issues);
     const userId = await ensureUser(req);
-    const simulations = await prisma.simulation.findMany({
-        where: { project: { userId } },
+    const where = { project: projectScopeWhere(req) };
+    const [simulations, totalCount] = await Promise.all([prisma.simulation.findMany({
+        where,
         include: {
             project: { select: { id: true, name: true } },
             persona: true,
             steps: { orderBy: { stepNumber: 'asc' } },
             reports: true
         },
-        orderBy: { createdAt: 'desc' },
-        take: 100
-    });
-    res.json(simulations);
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: pagination.data.limit + 1,
+        ...cursorArgs(pagination.data.cursor)
+    }), prisma.simulation.count({ where })]);
+    res.json(cursorPage(simulations, pagination.data.limit, totalCount));
 }));
 
 router.get('/reports', asyncHandler(async (req, res) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return invalid(res, 'Invalid pagination parameters', pagination.error.issues);
     const userId = await ensureUser(req);
-    const reports = await prisma.report.findMany({
-        where: { simulation: { project: { userId } } },
+    const where = { simulation: { project: projectScopeWhere(req) } };
+    const [reports, totalCount] = await Promise.all([prisma.report.findMany({
+        where,
         include: {
             simulation: {
                 include: {
@@ -350,16 +620,17 @@ router.get('/reports', asyncHandler(async (req, res) => {
                 }
             }
         },
-        orderBy: { createdAt: 'desc' },
-        take: 100
-    });
-    res.json(reports);
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: pagination.data.limit + 1,
+        ...cursorArgs(pagination.data.cursor)
+    }), prisma.report.count({ where })]);
+    res.json(cursorPage(reports, pagination.data.limit, totalCount));
 }));
 
 router.get('/reports/:id', asyncHandler(async (req, res) => {
     const userId = await ensureUser(req);
     const report = await prisma.report.findFirst({
-        where: { id: routeParam(req, 'id'), simulation: { project: { userId } } },
+        where: { id: routeParam(req, 'id'), simulation: { project: projectScopeWhere(req) } },
         include: {
             simulation: {
                 include: {
@@ -377,7 +648,7 @@ router.get('/reports/:id', asyncHandler(async (req, res) => {
 router.get('/simulations/:id/steps', asyncHandler(async (req, res) => {
     const userId = await ensureUser(req);
     const simulation = await prisma.simulation.findFirst({
-        where: { id: routeParam(req, 'id'), project: { userId } },
+        where: { id: routeParam(req, 'id'), project: projectScopeWhere(req) },
         select: { id: true }
     });
     if (!simulation) return res.status(404).json({ error: 'Simulation not found' });
@@ -395,7 +666,7 @@ router.post('/simulations/start', asyncHandler(async (req, res) => {
 
     const userId = await ensureUser(req);
     const project = await prisma.project.findFirst({
-        where: { id: parsed.data.projectId, userId },
+        where: { id: parsed.data.projectId, ...projectScopeWhere(req) },
         select: { id: true, productUrl: true, repoUrl: true, description: true }
     });
     if (!project) return res.status(404).json({ error: 'Project not found' });
@@ -430,7 +701,7 @@ router.post('/simulations/start', asyncHandler(async (req, res) => {
 router.post('/simulations/:id/retry', asyncHandler(async (req, res) => {
     const userId = await ensureUser(req);
     const previous = await prisma.simulation.findFirst({
-        where: { id: routeParam(req, 'id'), status: 'FAILED', project: { userId } },
+        where: { id: routeParam(req, 'id'), status: 'FAILED', project: projectScopeWhere(req) },
         include: { project: true, persona: true }
     });
     if (!previous) return res.status(404).json({ error: 'Failed simulation not found' });
