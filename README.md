@@ -1,6 +1,6 @@
 # ShadowTest
 
-### Find product friction before it costs you customers.
+**Find product friction before it costs you customers.**
 
 ShadowTest helps product teams explore how people might experience a website
 before spending days arranging interviews or waiting for the next round of user
@@ -98,136 +98,100 @@ review. Track the result over several projects before making an ROI claim.
 - Use Redis-backed job queues, retry failed simulations, and apply plan limits.
 - Optionally connect Stripe subscriptions.
 
-## Architecture
+## System Architecture
 
-### High-level design (HLD)
+### High-Level Design (HLD)
 
-This view shows the main services and the direction information travels. The
-Next.js application serves the user interface and proxies dashboard requests
-to the API. The API manages identity, access, records, and job dispatch. The
-Python worker performs AI tasks away from the request path.
+This overview shows how the user-facing application, backend, AI services, and
+data stores work together. The web app sends dashboard requests through its
+same-origin API proxy. The API handles identity, access, persistence, and job
+dispatch. A background worker processes longer-running simulations and
+document-indexing jobs.
 
 ```mermaid
 flowchart LR
-    Person["People<br/>Founders · product teams · curious users"]
-    Web["Next.js web app<br/>Dashboard"]
-    Proxy["Next.js API proxy<br/>Same-origin requests"]
-    Auth["Clerk<br/>Sign-in · organizations"]
-    API["Express API<br/>Access control · validation · orchestration"]
-    DB[("PostgreSQL<br/>Projects · personas · runs · reports")]
-    Redis[("Redis<br/>Job queue · API cache · rate limits")]
-    AIService["FastAPI AI service<br/>Job intake · semantic search"]
-    Worker["Python background worker<br/>Simulation · document indexing"]
-    AI["Anthropic<br/>Persona reasoning"]
-    Site["Public product pages<br/>Read-only page text"]
-    S3[("Private S3-compatible storage<br/>Original documents")]
-    Vector[("Qdrant<br/>Document embeddings")]
-    Vercel["Vercel"]
-    Render["Render"]
-
-    Person --> Web
-    Web --> Auth
-    Web --> Proxy
-    Proxy --> API
-    API --> DB
-    API <--> Redis
-    API --> S3
-    API --> AIService
+    User["User"] --> Web["Next.js dashboard"]
+    Web --> Clerk["Clerk authentication"]
+    Web --> Proxy["Next.js API proxy"]
+    Proxy --> API["Express API"]
+    API --> Postgres[("PostgreSQL")]
+    API --> Redis[("Redis queue and cache")]
+    API --> Storage[("Private S3 storage")]
+    API --> AIService["FastAPI AI service"]
     AIService --> Redis
-    AIService --> Vector
-    Redis --> Worker
-    Worker --> AI
-    Worker --> Site
-    Worker --> S3
-    Worker --> Vector
+    AIService --> Qdrant[("Qdrant vector search")]
+    Redis --> Worker["Python background worker"]
+    Worker --> Anthropic["Anthropic model"]
+    Worker --> Website["Public website content"]
+    Worker --> Storage
+    Worker --> Qdrant
     Worker --> API
-    Web -. hosted on .-> Vercel
-    API -. hosted on .-> Render
-    AIService -. hosted on .-> Render
-    Worker -. hosted on .-> Render
 ```
 
-### Low-level design (LLD)
+### Low-Level Design (LLD)
 
-#### A simulation, from request to report
+#### Simulation lifecycle
 
 ```mermaid
-sequenceDiagram
-    actor User
-    participant Web as Next.js dashboard
-    participant Auth as Clerk
-    participant API as Express API
-    participant AIService as FastAPI AI service
-    participant DB as PostgreSQL
-    participant Queue as Redis queue
-    participant Worker as Python worker
-    participant Page as Public product page
-    participant Model as Anthropic
+flowchart TD
+    User["1. User chooses a project, persona, and task"]
+    Web["2. Dashboard sends request with Clerk session"]
+    API["3. API verifies identity and project access"]
+    Database["4. PostgreSQL stores simulation record"]
+    AIService["5. AI service accepts simulation job"]
+    Queue["6. Redis queues the job"]
+    Worker["7. Worker runs the simulation"]
+    Page["8. Read public page content"]
+    Model["9. Ask AI persona to reason about the task"]
+    SaveStep["10. API saves each walkthrough step"]
+    Report["11. Save report and final simulation status"]
+    Results["12. Dashboard displays trace and report"]
 
-    User->>Web: Choose project, persona, and task
-    Web->>Auth: Get signed session token
-    Web->>API: Start simulation through API proxy
-    API->>API: Verify Clerk JWT and organization claims
-    API->>DB: Check access; save simulation record
-    API->>AIService: Request simulation enqueue
-    AIService->>Queue: Enqueue job
-    API-->>Web: Return saved run
-    Queue->>Worker: Deliver queued job
-    Worker->>API: Mark run RUNNING
-    loop Each walkthrough step
-        Worker->>Page: Fetch allowed public page text
-        Page-->>Worker: HTML content
-        Worker->>Model: Ask persona to reason about task and page
-        Model-->>Worker: Observation, interpretation, next step
-        Worker->>API: Persist step
-    end
-    Worker->>API: Persist report and final status
-    Web->>API: Fetch run, steps, and report
-    API-->>Web: Return saved results
-    Web-->>User: Show trace and insights
+    User --> Web --> API
+    API --> Database
+    API --> AIService --> Queue --> Worker
+    Worker --> Page --> Model --> SaveStep --> Database
+    SaveStep --> Worker
+    Worker --> Report --> API
+    API --> Database
+    Database --> API --> Results
 ```
 
-#### Document upload and search
+The worker repeats the page-inspection and reasoning steps until it reaches a
+result or the run's step limit. Page inspection is read-only: it does not sign
+in, click controls, or submit forms.
+
+#### Document upload and semantic search
 
 ```mermaid
-sequenceDiagram
-    actor User
-    participant Web as Project dashboard
-    participant API as Express API
-    participant AIService as FastAPI AI service
-    participant S3 as Private object storage
-    participant Queue as Redis queue
-    participant Worker as Python worker
-    participant Embed as FastEmbed
-    participant Qdrant as Vector database
+flowchart TD
+    User["User selects a supported document"]
+    Web["Project dashboard"]
+    API["Express API"]
+    Upload["Short-lived, size-constrained upload authorization"]
+    S3["Private S3-compatible storage"]
+    Confirm["API verifies the uploaded object"]
+    AIService["FastAPI AI service"]
+    Redis["Redis job queue"]
+    Worker["Background worker"]
+    Extract["Extract text and split into chunks"]
+    Embed["FastEmbed creates vectors"]
+    Qdrant["Qdrant stores project-scoped vectors"]
+    Status["API records indexing status"]
+    Search["User submits a project-scoped search"]
+    Query["AI service embeds query and searches Qdrant"]
+    Results["Relevant passages return to dashboard"]
 
-    User->>Web: Select PDF, Markdown, or text file
-    Web->>API: Request short-lived upload form
-    API->>S3: Create constrained presigned upload
-    API->>API: Save document metadata as UPLOADING
-    API-->>Web: Return upload URL and form fields
-    Web->>S3: Upload file directly
-    Web->>API: Confirm upload
-    API->>S3: Check stored object and expected size
-    API->>AIService: Request document indexing
-    AIService->>Queue: Enqueue indexing job
-    Queue->>Worker: Deliver indexing job
-    Worker->>S3: Read document
-    Worker->>Worker: Extract text and split into chunks
-    Worker->>Embed: Create vectors
-    Embed-->>Worker: Document vectors
-    Worker->>Qdrant: Store project-scoped chunks
-    Worker->>API: Mark document READY or FAILED
-
-    User->>Web: Search project documents
-    Web->>API: Submit query
-    API->>AIService: Request semantic search
-    AIService->>Embed: Embed query
-    AIService->>Qdrant: Find relevant project chunks
-    Qdrant-->>AIService: Matching passages
-    AIService-->>API: Search results
-    API-->>Web: Return passages and relevance
+    User --> Web --> API --> Upload --> Web
+    Web --> S3
+    S3 --> Confirm --> AIService --> Redis --> Worker
+    Worker --> Extract --> Embed --> Qdrant --> Status --> API
+    User --> Search --> API --> Query --> Qdrant
+    Query --> Results --> API --> Web
 ```
+
+Uploads are limited to PDF, Markdown, and plain text, up to 10 MB per file.
+Search results are scoped to the selected project.
 
 ## Technology
 
