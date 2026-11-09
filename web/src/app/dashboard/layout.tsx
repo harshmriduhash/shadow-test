@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Zap, LayoutDashboard, Users, Activity, FileText, Settings, Search, Cpu } from "lucide-react";
+import { LayoutDashboard, Users, Activity, FileText, Settings, Search, Cpu } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
 import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";

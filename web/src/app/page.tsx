@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { motion, useScroll, useTransform } from "framer-motion";
-import { Brain, Activity, ChartSpline, Code, ArrowRight, Zap, Target, Cpu, MousePointer2 } from "lucide-react";
+import { Brain, Activity, ArrowRight, Zap, Target, Cpu } from "lucide-react";
 import { useRef } from "react";
 
 export default function LandingPage() {
@@ -74,7 +75,7 @@ export default function LandingPage() {
                 <span className="text-transparent bg-clip-text bg-gradient-to-b from-zinc-100 to-zinc-500 italic font-light font-serif">User Simulation</span>
               </h1>
               <p className="mx-auto max-w-[640px] text-zinc-400 md:text-xl mb-12 font-light leading-relaxed">
-                Autonomous AI personas that explore, interpret, and test your product like a sophisticated human user would.
+                Synthetic personas review public product pages and repository context, then produce a trace of task-oriented usability findings.
               </p>
               <div className="flex flex-col sm:flex-row gap-6 justify-center">
                 <Link href="/signup">
@@ -123,8 +124,8 @@ export default function LandingPage() {
                   <Brain className="h-40 w-40 text-primary" />
                 </div>
                 <div className="max-w-md space-y-2">
-                  <h4 className="text-2xl font-bold text-white">Sophisticated Carbon-Copy Personas</h4>
-                  <p className="text-zinc-400 font-light">From impatient developers to enterprise buyers. Our personas inherit complex psychological traits to mimic diverse user groups.</p>
+                  <h4 className="text-2xl font-bold text-white">Task-specific Personas</h4>
+                  <p className="text-zinc-400 font-light">Set persona traits such as technical experience and patience to guide the model&apos;s evaluation of product context.</p>
                 </div>
               </motion.div>
 
@@ -135,8 +136,8 @@ export default function LandingPage() {
               >
                 <Zap className="h-12 w-12 text-primary" />
                 <div className="space-y-2">
-                  <h4 className="text-2xl font-bold text-white">Sub-30s Loop</h4>
-                  <p className="text-zinc-400 text-sm font-light">Full behavioral cycle from scrape to reasoning recorded in records-breaking time.</p>
+                  <h4 className="text-2xl font-bold text-white">Background Runs</h4>
+                  <p className="text-zinc-400 text-sm font-light">Durable queued simulations run independently from the dashboard request.</p>
                 </div>
               </motion.div>
 
@@ -148,7 +149,7 @@ export default function LandingPage() {
                 <Activity className="h-12 w-12 text-primary/60" />
                 <div className="space-y-2">
                   <h4 className="text-2xl font-bold text-white">Real-time Traces</h4>
-                  <p className="text-zinc-400 text-sm font-light">Watch neural decisions stream live as the persona navigates your UX.</p>
+                  <p className="text-zinc-400 text-sm font-light">Follow persisted reasoning steps as the read-only walkthrough progresses.</p>
                 </div>
               </motion.div>
 
@@ -157,11 +158,11 @@ export default function LandingPage() {
                 whileHover={{ y: -5 }}
                 className="md:col-span-8 group relative overflow-hidden rounded-3xl border border-white/10 p-1 flex justify-center items-center bg-gradient-to-br from-zinc-800 to-black"
               >
-                <img src="/simulation_graph_1773416200123.png" alt="UX Graph" className="absolute inset-0 w-full h-full object-cover opacity-30 group-hover:scale-105 transition-transform duration-700" />
+                <Image src="/simulation_graph_1773416200123.png" alt="Simulation analytics preview" fill sizes="(max-width: 768px) 100vw, 66vw" className="object-cover opacity-30 transition-transform duration-700 group-hover:scale-105" />
                 <div className="relative z-10 p-8 w-full h-full flex flex-col justify-end">
                   <div className="max-w-md space-y-2">
                     <h4 className="text-2xl font-bold text-white">UX Friction Mapping</h4>
-                    <p className="text-zinc-400 font-light">Visualizing confusion points with heatmaps and abandonment event triggers.</p>
+                    <p className="text-zinc-400 font-light">Review reported friction points and task outcomes from completed simulations.</p>
                   </div>
                 </div>
               </motion.div>
@@ -187,7 +188,7 @@ export default function LandingPage() {
                   <p className="flex items-center gap-2"><Target className="h-4 w-4 text-primary" /> 1 dedicated project</p>
                   <p className="flex items-center gap-2"><Target className="h-4 w-4 text-primary" /> Basic persona library</p>
                 </div>
-                <Button variant="outline" className="w-full border-white/10 hover:bg-white/5 py-6">Initiate</Button>
+                <Link href="/pricing"><Button variant="outline" className="w-full border-white/10 hover:bg-white/5 py-6">Initiate</Button></Link>
               </div>
 
               <div className="p-12 space-y-8 bg-primary/5 hover:bg-primary/10 transition-colors relative">
@@ -201,7 +202,7 @@ export default function LandingPage() {
                   <p className="flex items-center gap-2"><Zap className="h-4 w-4 text-primary" /> 10 projects capacity</p>
                   <p className="flex items-center gap-2"><Zap className="h-4 w-4 text-primary" /> Full persona tuning</p>
                 </div>
-                <Button className="w-full bg-primary text-primary-foreground py-6 shadow-[0_0_30px_rgba(16,185,129,0.3)]">Propel</Button>
+                <Link href="/pricing"><Button className="w-full bg-primary text-primary-foreground py-6 shadow-[0_0_30px_rgba(16,185,129,0.3)]">Propel</Button></Link>
               </div>
 
               <div className="p-12 space-y-8 hover:bg-white/[0.02] transition-colors">
@@ -212,9 +213,9 @@ export default function LandingPage() {
                 <div className="space-y-4 text-sm text-zinc-400">
                   <p className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /> 1000 simulations / month</p>
                   <p className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /> Unlimited projects</p>
-                  <p className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /> Team API Access</p>
+                  <p className="flex items-center gap-2"><Brain className="h-4 w-4 text-primary" /> CSV report export</p>
                 </div>
-                <Button variant="outline" className="w-full border-white/10 hover:bg-white/5 py-6">Scale</Button>
+                <Link href="/pricing"><Button variant="outline" className="w-full border-white/10 hover:bg-white/5 py-6">Scale</Button></Link>
               </div>
             </div>
           </div>
@@ -229,7 +230,7 @@ export default function LandingPage() {
               <span className="tracking-tighter text-xl">Shadow<span className="text-primary">Test</span></span>
             </Link>
             <p className="text-xs text-zinc-500 max-w-sm">
-              The world's first behavioral testing infrastructure powered by carbon-copy synthetic user personas.
+              Early-access synthetic usability walkthroughs for product teams.
             </p>
           </div>
           <div className="flex flex-wrap gap-12">

@@ -1,35 +1,26 @@
-# ShadowTest AI Engine 🤖
+# ShadowTest AI service and worker
 
-The cognitive core of the ShadowTest platform. Uses high-reasoning language models to simulate human-like interactions with any web interface.
+The FastAPI service validates product sources and accepts simulation jobs. Jobs
+are placed on Redis and consumed by `worker.py`; the worker writes trace steps,
+reports, and status changes through authenticated internal API routes. Redis
+jobs left in the processing list after a worker interruption are returned to
+the pending queue on worker startup.
 
-## ✨ Features
+The walkthrough is read-only. It reads public HTTPS page text and can navigate
+to same-host links; it does not operate browser controls, submit forms, or
+perform mutations on a target product. GitHub README access is also supported.
 
-- **Behavioral Simulation**: Driven by **Claude 3.5 Sonnet**, simulating persona-specific observations and decisions.
-- **Autonomous Scraping**: Real-time context gathering using **BeautifulSoup** and **HTTPX**.
-- **Reasoning Loop**: Implements the *Observation → Interpretation → Decision → Action → Outcome* sequence.
-- **Microservices-Native**: Built with **FastAPI** to handle background simulation tasks asynchronously.
+## Local development
 
-## 🛠️ Tech Stack
+1. Create and activate a Python environment, then install
+   `requirements.txt`.
+2. Copy `.env.example` to `.env` and set `API_URL`, the same
+   `INTERNAL_API_KEY` as the API, `ANTHROPIC_API_KEY`, and `REDIS_URL`.
+3. Run the API service and worker in separate terminals:
+   ```sh
+   uvicorn main:app --reload --port 8000
+   python worker.py
+   ```
 
-- **Runtime**: Python 3.9+
-- **Core Framework**: FastAPI
-- **LLM Provider**: Anthropic (Claude 3.5 Sonnet)
-- **Scraping**: BeautifulSoup4 & HTTPX
-- **Async Processing**: Python Asyncio with FastAPI BackgroundTasks
-
-## 🚀 Getting Started
-
-1.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-2.  **Environment Variables**:
-    Create a `.env` file with your `ANTHROPIC_API_KEY`.
-3.  **Run Server**:
-    ```bash
-    python main.py
-    ```
-
----
-
-*Part of the [ShadowTest](./../README.md) Infrastructure*
+The API can run without Redis only in development, where FastAPI background
+tasks are used instead of the durable queue.

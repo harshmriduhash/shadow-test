@@ -2,7 +2,8 @@ fastapi
 uvicorn
 pydantic
 anthropic
-qdrant-client
+redis>=5,<6
+aiohttp>=3.11,<4
 python-dotenv
 httpx
 beautifulsoup4

@@ -1,87 +1,132 @@
 "use client";
+
+import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle2, XCircle, FileDown, Eye, BarChart3, TrendingUp, AlertCircle } from "lucide-react";
-import { motion } from "framer-motion";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { api, authOptions, type Report } from "@/lib/api";
+
+function readInsights(value: string | null) {
+    if (!value) return { items: [], error: "" };
+    try {
+        const parsed: unknown = JSON.parse(value);
+        if (!Array.isArray(parsed) || !parsed.every(item => typeof item === "string")) {
+            return { items: [], error: "Stored insights have an unexpected format." };
+        }
+        return { items: parsed as string[], error: "" };
+    } catch {
+        return { items: [], error: "Stored insights could not be decoded." };
+    }
+}
+
+function csvCell(value: string | number) {
+    return `"${String(value).replaceAll('"', '""')}"`;
+}
 
 export default function ReportsPage() {
+    const { isLoaded, userId, getToken } = useAuth();
+    const [reports, setReports] = useState<Report[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+        if (!isLoaded || !userId) return;
+        let cancelled = false;
+        void (async () => {
+            try {
+                const result = await api.reports.list(authOptions(await getToken()));
+                if (!cancelled) setReports(result);
+            } catch (loadError) {
+                if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load reports.");
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [getToken, isLoaded, userId]);
+
+    const metrics = useMemo(() => {
+        const knownOutcomes = reports.filter(report => typeof report.simulation.success === "boolean");
+        const successes = knownOutcomes.filter(report => report.simulation.success).length;
+        const frictionCount = reports.reduce((total, report) => total + readInsights(report.insights).items.length, 0);
+        return {
+            total: reports.length,
+            successRate: knownOutcomes.length ? Math.round((successes / knownOutcomes.length) * 100) : null,
+            frictionCount
+        };
+    }, [reports]);
+
+    const exportCsv = () => {
+        const rows = [
+            ["Project", "Persona", "Task", "Status", "Successful", "Summary", "Insights", "Created at"],
+            ...reports.map(report => [
+                report.simulation.project.name,
+                report.simulation.persona.name,
+                report.simulation.task,
+                report.simulation.status,
+                report.simulation.success === null || report.simulation.success === undefined ? "Unknown" : String(report.simulation.success),
+                report.summary || "",
+                readInsights(report.insights).items.join("; "),
+                report.createdAt
+            ])
+        ];
+        const csv = rows.map(row => row.map(csvCell).join(",")).join("\r\n");
+        const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = "shadowtest-reports.csv";
+        anchor.click();
+        URL.revokeObjectURL(url);
+    };
+
     return (
-        <div className="flex flex-col gap-10 max-w-6xl mx-auto">
-            <div className="flex items-end justify-between">
-                <div className="space-y-1">
-                    <h1 className="text-4xl font-bold tracking-tighter text-white">Intelligence</h1>
-                    <p className="text-zinc-500 font-mono text-xs uppercase tracking-widest">Aggregated Behavioral Analytics</p>
+        <div className="mx-auto flex max-w-6xl flex-col gap-8">
+            <header className="flex items-end justify-between gap-6">
+                <div>
+                    <h1 className="text-4xl font-bold tracking-tight text-white">Reports</h1>
+                    <p className="mt-2 text-sm text-zinc-400">Outcomes and friction insights from your completed simulations.</p>
                 </div>
-                <Button variant="outline" className="rounded-xl border-white/[0.05] hover:bg-white/[0.02] text-zinc-400 group">
-                    <FileDown className="mr-2 h-4 w-4 group-hover:text-primary transition-colors" />
-                    Export Global Data
-                </Button>
+                <Button variant="outline" onClick={exportCsv} disabled={!reports.length}>Export CSV</Button>
+            </header>
+            {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
+
+            <div className="grid gap-4 md:grid-cols-3">
+                <Card><CardHeader><CardTitle>Total reports</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.total}</p></CardContent></Card>
+                <Card><CardHeader><CardTitle>Task success rate</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.successRate === null ? "—" : `${metrics.successRate}%`}</p></CardContent></Card>
+                <Card><CardHeader><CardTitle>Friction insights</CardTitle></CardHeader><CardContent><p className="text-3xl font-semibold text-white">{metrics.frictionCount}</p></CardContent></Card>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-3">
-                {[
-                    { label: "Total Loops", value: "124", sub: "+12% Efficiency", icon: BarChart3, color: "text-zinc-400" },
-                    { label: "Success Rate", value: "68%", sub: "Task Completion", icon: TrendingUp, color: "text-primary" },
-                    { label: "Critical Friction", value: "Reg Flow", sub: "High Cognitive Load", icon: AlertCircle, color: "text-destructive" },
-                ].map((stat, i) => (
-                    <motion.div
-                        key={stat.label}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.1 }}
-                    >
-                        <Card className="rounded-3xl border-white/[0.05] bg-zinc-900/20 hover:bg-zinc-900/30 transition-colors group">
-                            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-                                <CardTitle className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">{stat.label}</CardTitle>
-                                <stat.icon className={`h-4 w-4 ${stat.color} opacity-50`} />
-                            </CardHeader>
-                            <CardContent>
-                                <div className={`text-3xl font-bold tracking-tighter ${stat.color === 'text-primary' ? 'text-primary' : 'text-white'}`}>{stat.value}</div>
-                                <p className="text-[10px] font-mono text-zinc-600 mt-2 uppercase tracking-tighter">{stat.sub}</p>
-                            </CardContent>
-                        </Card>
-                    </motion.div>
-                ))}
-            </div>
-
-            <Card className="rounded-3xl border-white/[0.05] bg-transparent overflow-hidden">
-                <CardHeader className="border-b border-white/[0.05] pb-6">
-                    <CardTitle className="text-xl text-white">Recent Intel</CardTitle>
-                    <CardDescription className="text-zinc-500 font-mono text-[10px] uppercase tracking-widest">Behavioral Trace History</CardDescription>
-                </CardHeader>
-                <CardContent className="p-0">
-                    <div className="bg-black/20 overflow-hidden">
-                        <div className="grid grid-cols-5 bg-white/[0.02] p-4 text-[10px] font-mono text-zinc-500 uppercase tracking-widest border-b border-white/[0.05]">
-                            <div className="col-span-1">Status</div>
-                            <div className="col-span-1">Project</div>
-                            <div className="col-span-1">Persona</div>
-                            <div className="col-span-1">Timestamp</div>
-                            <div className="col-span-1 text-right">Actions</div>
-                        </div>
-                        <div className="divide-y divide-white/[0.05]">
-                            {[
-                                { status: 'success', project: 'Acme CRM', persona: 'Enterprise Buyer', date: '2h ago' },
-                                { status: 'failed', project: 'Acme CRM', persona: 'Impatient Dev', date: '5h ago' },
-                            ].map((report, idx) => (
-                                <div key={idx} className="grid grid-cols-5 items-center p-4 text-sm group hover:bg-white/[0.02] transition-colors">
-                                    <div className={`col-span-1 flex items-center text-xs font-mono uppercase tracking-tighter ${report.status === 'success' ? 'text-primary' : 'text-destructive'}`}>
-                                        {report.status === 'success' ? <CheckCircle2 className="h-3 w-3 mr-2" /> : <XCircle className="h-3 w-3 mr-2" />}
-                                        {report.status}
+            <section className="space-y-4">
+                <h2 className="text-lg font-semibold text-white">Recent reports</h2>
+                {loading && <p className="text-sm text-zinc-500">Loading reports…</p>}
+                {!loading && reports.map(report => {
+                    const insights = readInsights(report.insights);
+                    return (
+                        <article key={report.id} className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <h3 className="font-medium text-white">{report.simulation.project.name}</h3>
+                                        <span className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-zinc-400">{report.simulation.status}</span>
+                                        {typeof report.simulation.success === "boolean" && (
+                                            <span className="text-xs text-zinc-400">{report.simulation.success ? "Task succeeded" : "Task not completed"}</span>
+                                        )}
                                     </div>
-                                    <div className="col-span-1 font-medium text-zinc-300">{report.project}</div>
-                                    <div className="col-span-1 text-zinc-500 text-xs">{report.persona}</div>
-                                    <div className="col-span-1 text-zinc-600 text-[10px] font-mono">{report.date}</div>
-                                    <div className="col-span-1 flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <Button variant="ghost" size="icon" className="rounded-lg hover:bg-white/[0.05] text-zinc-400 group-hover:text-white"><Eye className="h-4 w-4" /></Button>
-                                        <Button variant="ghost" size="icon" className="rounded-lg hover:bg-white/[0.05] text-zinc-400 group-hover:text-white"><FileDown className="h-4 w-4" /></Button>
-                                    </div>
+                                    <p className="mt-1 text-xs text-zinc-500">{report.simulation.persona.name} · {new Date(report.createdAt).toLocaleString()}</p>
+                                    <p className="mt-4 text-sm text-zinc-300">{report.summary}</p>
+                                    {insights.items.length > 0 && <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-zinc-400">{insights.items.map((insight, index) => <li key={`${report.id}-${index}`}>{insight}</li>)}</ul>}
+                                    {insights.error && <p role="alert" className="mt-3 text-sm text-destructive">{insights.error}</p>}
                                 </div>
-                            ))}
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
+                                <Link href={`/dashboard/reports/${report.id}`} className="shrink-0">
+                                    <Button variant="outline" size="sm">View report</Button>
+                                </Link>
+                            </div>
+                        </article>
+                    );
+                })}
+                {!loading && reports.length === 0 && <p className="rounded-xl border border-white/10 p-6 text-sm text-zinc-500">Reports will appear here after your first simulation completes.</p>}
+            </section>
         </div>
     );
 }

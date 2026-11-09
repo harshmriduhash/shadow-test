@@ -1,37 +1,29 @@
-# ShadowTest API Gateway ⚙️
+# ShadowTest API
 
-The core orchestration service for the ShadowTest platform. Manages state, persists simulation data, and coordinates between the frontend and the AI reasoning engine.
+The Express API authenticates Clerk bearer tokens, scopes product data to the
+authenticated user, persists projects/personas/simulations/reports with Prisma,
+enforces subscription limits, and dispatches simulations to the AI service.
+Internal AI callbacks require the shared `INTERNAL_API_KEY`; client-supplied
+user IDs are not trusted.
 
-## ✨ Features
+## Local development
 
-- **State Management**: PostgreSQL persistence using Prisma ORM.
-- **Orchestration**: Triggers AI simulations and streams real-time traces back to the dashboard.
-- **Security**: Validates Clerk JWTs and ensures multi-tenant data isolation via `x-user-id`.
-- **Relational Integrity**: Tracks Projects, Personas, Simulations, and granular Behavioral Steps.
+1. Copy `.env.example` to `.env` and set PostgreSQL, Clerk, and internal service
+   values.
+2. Install dependencies and generate Prisma Client:
+   ```sh
+   npm install
+   npx prisma generate
+   ```
+3. Apply migrations:
+   ```sh
+   npm run migrate:deploy
+   ```
+4. Start the API:
+   ```sh
+   npm run dev
+   ```
 
-## 🛠️ Tech Stack
-
-- **Runtime**: Node.js (TypeScript)
-- **Framework**: Express.js
-- **ORM**: Prisma
-- **Database**: PostgreSQL (Optimized for Vercel Postgres)
-- **Communication**: RESTful API / JSON
-
-## 🚀 Getting Started
-
-1.  **Install Dependencies**:
-    ```bash
-    npm install
-    ```
-2.  **Database Sync**:
-    ```bash
-    npx prisma db push
-    ```
-3.  **Run Development Server**:
-    ```bash
-    npm run dev
-    ```
-
----
-
-*Part of the [ShadowTest](./../README.md) Infrastructure*
+The Redis URL is optional for local development; without it the rate limiter
+uses its in-process store. Production startup requires Redis so rate limits are
+shared across API instances.

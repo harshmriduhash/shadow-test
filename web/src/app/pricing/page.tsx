@@ -1,11 +1,79 @@
 "use client";
+import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Cpu, Sparkles } from "lucide-react";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { motion } from "framer-motion";
+import { api, authOptions } from "@/lib/api";
+
+type PricingPlan = {
+    name: string;
+    price: string;
+    desc: string;
+    features: string[];
+    button: string;
+    variant: "outline" | "default";
+    popular?: boolean;
+};
+
+const plans: PricingPlan[] = [
+    {
+        name: "Node",
+        price: "$0",
+        desc: "For individual labs and hypotheses.",
+        features: ["3 simulations / month", "1 project", "Standard persona library", "Live trace and reports"],
+        button: "Initialize Free",
+        variant: "outline"
+    },
+    {
+        name: "Network",
+        price: "$29",
+        desc: "For scaling products and active dev teams.",
+        features: ["100 simulations / month", "10 projects", "Custom persona profiles", "CSV report export"],
+        button: "Deploy Network",
+        variant: "default",
+        popular: true
+    },
+    {
+        name: "Cluster",
+        price: "$99",
+        desc: "Higher monthly simulation capacity for product teams.",
+        features: ["1,000 simulations / month", "Unlimited projects", "Custom persona profiles", "CSV report export"],
+        button: "Scale Cluster",
+        variant: "outline"
+    }
+];
 
 export default function PricingPage() {
+    const { isSignedIn, getToken } = useAuth();
+    const router = useRouter();
+    const [checkoutPlan, setCheckoutPlan] = useState<"STARTER" | "PRO" | null>(null);
+    const [billingError, setBillingError] = useState("");
+
+    const choosePlan = async (plan: "FREE" | "STARTER" | "PRO") => {
+        setBillingError("");
+        if (plan === "FREE") {
+            router.push("/signup");
+            return;
+        }
+        if (!isSignedIn) {
+            router.push("/signup?redirect_url=%2Fpricing");
+            return;
+        }
+        setCheckoutPlan(plan);
+        try {
+            const session = await api.billing.checkout(plan, authOptions(await getToken()));
+            window.location.assign(session.url);
+        } catch (error) {
+            setBillingError(error instanceof Error ? error.message : "Unable to start checkout.");
+        } finally {
+            setCheckoutPlan(null);
+        }
+    };
+
     return (
         <div className="flex flex-col min-h-screen bg-[#020202] text-zinc-100">
             {/* Nav */}
@@ -41,38 +109,12 @@ export default function PricingPage() {
                         </motion.div>
                         <h1 className="text-5xl md:text-6xl font-bold tracking-tighter text-white">Investment Levels.</h1>
                         <p className="text-xl text-zinc-500 max-w-2xl mx-auto font-light leading-relaxed">
-                            Scale your behavioral research from initial hypothesis to enterprise global deployment.
+                            Choose a monthly simulation and project allowance that fits your current testing needs.
                         </p>
                     </div>
 
                     <div className="grid md:grid-cols-3 gap-8 items-stretch pt-8">
-                        {[
-                            {
-                                name: "Node",
-                                price: "$0",
-                                desc: "For individual labs and hypotheses.",
-                                features: ["3 simulations / month", "1 project limit", "Standard persona library", "Terminal access"],
-                                button: "Initialize Free",
-                                variant: "outline"
-                            },
-                            {
-                                name: "Network",
-                                price: "$29",
-                                desc: "For scaling products and active dev teams.",
-                                features: ["100 simulations / month", "10 project nodes", "Custom persona synthesis", "Advanced behavioral logs", "Priority priority"],
-                                button: "Deploy Network",
-                                variant: "primary",
-                                popular: true
-                            },
-                            {
-                                name: "Cluster",
-                                price: "$99",
-                                desc: "Full-scale autonomous UX testing.",
-                                features: ["1,000 simulations / month", "Unlimited project nodes", "API & CI/CD access", "SOC2 compliance deck", "Dedicated support lead"],
-                                button: "Scale Cluster",
-                                variant: "outline"
-                            }
-                        ].map((plan, i) => (
+                        {plans.map((plan, i) => (
                             <motion.div
                                 key={plan.name}
                                 initial={{ opacity: 0, y: 20 }}
@@ -104,20 +146,25 @@ export default function PricingPage() {
                                     </CardContent>
                                     <CardFooter className="p-8">
                                         <Button 
-                                            variant={plan.variant as any} 
+                                            variant={plan.variant}
+                                            disabled={checkoutPlan !== null}
+                                            onClick={() => void choosePlan(plan.name === "Node" ? "FREE" : plan.name === "Network" ? "STARTER" : "PRO")}
                                             className={`w-full rounded-2xl h-14 font-semibold transition-all ${
-                                                plan.variant === 'primary' 
+                                                plan.variant === 'default'
                                                 ? 'bg-primary text-primary-foreground shadow-[0_4px_20px_rgba(16,185,129,0.2)] hover:shadow-[0_4px_30px_rgba(16,185,129,0.4)]' 
                                                 : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.08] text-white'
                                             }`}
                                         >
-                                            {plan.button}
+                                            {checkoutPlan === (plan.name === "Network" ? "STARTER" : plan.name === "Cluster" ? "PRO" : null) && plan.name !== "Node"
+                                                ? "Opening checkout…"
+                                                : plan.button}
                                         </Button>
                                     </CardFooter>
                                 </Card>
                             </motion.div>
                         ))}
                     </div>
+                    {billingError && <p role="alert" className="mt-6 text-center text-sm text-destructive">{billingError}</p>}
                 </div>
             </main>
 

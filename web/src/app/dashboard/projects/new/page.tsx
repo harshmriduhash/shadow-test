@@ -9,14 +9,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowLeft, Rocket, Loader2, Sparkles } from "lucide-react";
-import { api } from "@/lib/api";
+import { ArrowLeft, Loader2, Sparkles } from "lucide-react";
+import { api, authOptions } from "@/lib/api";
 import { motion } from "framer-motion";
 
 export default function NewProjectPage() {
-    const { userId } = useAuth();
+    const { getToken } = useAuth();
     const router = useRouter();
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState("");
     const [formData, setFormData] = useState({
         name: "",
         description: "",
@@ -27,16 +28,13 @@ export default function NewProjectPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setLoading(true);
+        setError("");
         try {
-            const project = await api.projects.create({
-                ...formData,
-                userId
-            }, {
-                headers: { 'x-user-id': userId || '' }
-            });
+            const token = await getToken();
+            const project = await api.projects.create(formData, authOptions(token));
             router.push(`/dashboard/projects/${project.id}`);
         } catch (error) {
-            console.error("Failed to create project:", error);
+            setError(error instanceof Error ? error.message : "Unable to create the project.");
         } finally {
             setLoading(false);
         }
@@ -66,6 +64,7 @@ export default function NewProjectPage() {
                             <CardDescription className="text-zinc-500 font-light">Define the context for synthetic behavioral synthesis.</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-8">
+                            {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
                             <div className="space-y-6">
                                 <div className="space-y-3">
                                     <Label htmlFor="name" className="text-[10px] font-mono text-zinc-400 uppercase tracking-widest">System Identifier <span className="text-primary">*</span></Label>

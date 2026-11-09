@@ -1,54 +1,66 @@
-# Deployment Guide 🚀
+# ShadowTest deployment
 
-ShadowTest is designed to be deployed across three main platforms for optimal performance and cost-efficiency.
+ShadowTest consists of a Next.js web app, an authenticated API, a FastAPI
+simulation service, a Redis queue and worker, PostgreSQL, Clerk, and Anthropic.
+The root `render.yaml` provisions the API, simulation service, worker, and Redis
+on Render. PostgreSQL, Clerk, Anthropic, Stripe, and the frontend are configured
+separately.
 
-## 1. Database (Neon or Supabase)
-ShadowTest requires a PostgreSQL database. We recommend **[Neon](https://neon.tech/)** for its serverless capabilities or **[Supabase](https://supabase.com/)**.
+## 1. Configure external services
 
-1. Create a new PostgreSQL project.
-2. Copy the **Connection String** (e.g., `postgresql://user:password@hostname/dbname?sslmode=require`).
-3. You will use this as `DATABASE_URL` in both the Backend and Frontend.
+1. Create a PostgreSQL database with a pooled connection URL and a direct
+   connection URL. Set both `POSTGRES_PRISMA_URL` and
+   `POSTGRES_URL_NON_POOLING` on the Render API service.
+2. Configure Clerk sign-in and allowed providers in the Clerk dashboard. Set
+   `CLERK_ISSUER_URL` on the API to the issuer for the same Clerk instance.
+3. Create an Anthropic API key and set `ANTHROPIC_API_KEY` on both AI services.
+   The Render blueprint sets the default model; change `ANTHROPIC_MODEL` if
+   your account uses a different available model.
+4. Connect the repository to Render and deploy the root blueprint. It generates
+   one `INTERNAL_API_KEY` shared by the API, AI service, and worker, and connects
+   all three services to the provisioned Redis instance.
 
----
+The Render API service runs the checked-in Prisma migration before each
+deployment. For an existing database that was previously initialized with
+`prisma db push`, do not deploy the initial migration blindly: first verify the
+database schema matches it and baseline the migration with Prisma's
+`migrate resolve` command.
 
-## 2. API & AI Engine (Render)
-We use **[Render](https://render.com/)** to host the compute-intensive parts of the application. The repository includes a `render.yaml` file for automated setup.
+## 2. Deploy the web app to Vercel
 
-1. Connect your GitHub repository to Render.
-2. Render will automatically detect the `render.yaml` file.
-3. **Configure Environment Variables** in the Render Dashboard:
-   - **shadowtest-api**:
-     - `POSTGRES_PRISMA_URL`: Your Vercel Postgres connection pooling URL.
-     - `POSTGRES_URL_NON_POOLING`: Your Vercel Postgres direct connection URL.
-   - **shadowtest-ai-engine**:
-     - `ANTHROPIC_API_KEY`: Your Anthropic API key.
-     - `API_URL`: The URL of your `shadowtest-api` service.
+1. Import the repository and set `web` as the Vercel root directory.
+2. Set `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` for the
+   production Clerk instance.
+3. Set `NEXT_PUBLIC_API_URL` to the public Render API URL followed by `/api`.
+   Set `NEXT_PUBLIC_CONTACT_EMAIL` to the mailbox that should receive contact
+   inquiries; the contact form opens a prefilled email draft in the visitor's
+   email client and does not send or store the message itself.
+4. Add the deployed web origin to the API's `ALLOWED_ORIGINS` value, and set the
+   same origin as the API's `APP_URL`.
+5. Redeploy after setting environment variables because the API URL is embedded
+   in the web build.
 
----
+See the service-specific `.env.example` files for local development variables.
+Never commit real `.env` files or place secret values in `NEXT_PUBLIC_*`
+variables.
 
-## 3. Frontend (Vercel)
-**[Vercel](https://vercel.com/)** is the standard for Next.js applications.
+## 3. Optional billing setup
 
-1. Import the repository into Vercel.
-2. Select the `apps/web` directory as the **Root Directory**.
-3. **Configure Environment Variables**:
-   - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`: From your Clerk Dashboard.
-   - `CLERK_SECRET_KEY`: From your Clerk Dashboard.
-   - `NEXT_PUBLIC_API_URL`: The URL of your Render API service + `/api` (e.g., `https://shadowtest-api.onrender.com/api`).
-   - `POSTGRES_PRISMA_URL`: Automatically added by Vercel Postgres.
-   - `POSTGRES_URL_NON_POOLING`: Automatically added by Vercel Postgres.
+To enable paid plans, set `STRIPE_SECRET_KEY`, the Starter and Pro Stripe price
+IDs, and `STRIPE_WEBHOOK_SECRET` on the API. Configure a Stripe webhook at
+`https://<api-host>/api/billing/webhook` for checkout completion and subscription
+update/deletion events. The app uses webhook events as the source of truth for
+subscription status.
 
----
+## 4. Verify the deployment
 
-## 4. Production Verification
-Once deployed, verify the connection:
-1. Visit your Vercel URL.
-2. Sign in (or use mock credentials if configured).
-3. Create a project and launch a simulation.
-4. Check the "Live Trace" to ensure the frontend is communicating with the Render API and the AI Engine.
+1. Check `/health` on both the API and AI service.
+2. Sign in through Clerk and create a project with an optional public HTTPS
+   product URL or public GitHub repository.
+3. Create/select a persona, start a simulation, and confirm the worker processes
+   it and the dashboard displays its persisted trace and report.
+4. If billing is enabled, verify a test checkout and webhook delivery in Stripe.
 
----
-
-## Troubleshooting
-- **CORS Errors**: Ensure the `API_URL` in the frontend matches the allowed origins in the backend `cors` configuration (in `apps/api/src/index.ts`).
-- **AI Engine Timeouts**: If the simulation takes more than 30 seconds, ensure your Render plan allows for long-running requests or use a background worker (Render's "Web Service" usually handles this, but "Free" tiers might spin down).
+Simulations are read-only page walkthroughs: they inspect public page text and
+may follow same-host links. They do not operate browser controls, submit forms,
+or change data on the target product.

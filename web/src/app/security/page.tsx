@@ -49,25 +49,25 @@ export default function SecurityPage() {
                             {
                                 icon: Lock,
                                 title: "Authentication Shielding",
-                                desc: "Advanced JWT rotation with ephemeral session logic. Integrated with Clerk's secure identity layer for biometric and MFA support.",
+                                desc: "API requests are authenticated with Clerk-issued bearer tokens verified against the configured Clerk JWKS and issuer.",
                                 color: "text-primary"
                             },
                             {
                                 icon: Server,
                                 title: "Data Siloing",
-                                desc: "Reports and behavioral traces are encrypted at rest using AES-256 and siloed per project node in isolated compute clusters.",
+                                desc: "Project, persona, simulation, and report queries are scoped to the authenticated account in the application data layer.",
                                 color: "text-zinc-500"
                             },
                             {
                                 icon: UploadCloud,
                                 title: "Ephemeral Ingestion",
-                                desc: "Repository and URL analysis is processed in-memory. No permanent storage of source code or proprietary DOM snapshots.",
+                                desc: "The service does not store fetched source files or full page snapshots. Generated traces and reports are persisted for your account.",
                                 color: "text-zinc-500"
                             },
                             {
                                 icon: Sparkles,
                                 title: "Neural Privacy",
-                                desc: "LLM training is strictly inhibited. Your interaction data is never used to improve global models, ensuring logic exclusivity.",
+                                desc: "Simulation context, including extracted page text and any supplied README, is sent to Anthropic to generate the walkthrough. Avoid submitting secrets or data you are not authorized to share.",
                                 color: "text-primary"
                             }
                         ].map((item, i) => (
@@ -91,8 +91,8 @@ export default function SecurityPage() {
                         viewport={{ once: true }}
                         className="mt-24 p-12 rounded-[3rem] border border-primary/20 bg-primary/[0.02] text-center"
                     >
-                        <h3 className="text-2xl font-bold text-white mb-2 italic tracking-tighter">Enterprise Standard Compliance</h3>
-                        <p className="text-zinc-500 font-light mb-8 max-w-xl mx-auto">Requires DPA or SOC2 documentation? Our security team provides full compliance disclosure for Cluster-tier partners.</p>
+                        <h3 className="text-2xl font-bold text-white mb-2 italic tracking-tighter">Early-access security scope</h3>
+                        <p className="text-zinc-500 font-light mb-8 max-w-xl mx-auto">ShadowTest is not currently represented as SOC 2 certified. Review the data-handling details above before submitting product context.</p>
                         <Link href="/contact">
                             <Button className="bg-primary text-primary-foreground rounded-2xl px-10 h-14 shadow-xl shadow-primary/10 font-bold">Request Security Brief</Button>
                         </Link>

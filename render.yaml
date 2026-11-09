@@ -1,18 +1,105 @@
+envVarGroups:
+  - name: shadowtest-shared
+    envVars:
+      - key: INTERNAL_API_KEY
+        generateValue: true
+
 services:
+  - type: redis
+    name: shadowtest-redis
+    plan: starter
+    ipAllowList: []
+
   - type: web
     name: shadowtest-api
-    env: node
-    buildCommand: "cd apps/api && npm install && npx prisma generate && npm run build"
-    startCommand: "cd apps/api && npm start"
+    runtime: node
+    plan: starter
+    rootDir: api
+    buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run migrate:deploy
+    startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: 20
-      - key: DATABASE_URL
+      - key: NODE_ENV
+        value: production
+      - fromGroup: shadowtest-shared
+      - key: POSTGRES_PRISMA_URL
         sync: false
+      - key: POSTGRES_URL_NON_POOLING
+        sync: false
+      - key: CLERK_ISSUER_URL
+        sync: false
+      - key: CLERK_JWT_AUDIENCE
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: AI_ENGINE_URL
+        value: http://shadowtest-ai-engine:8000
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: shadowtest-redis
+          property: connectionString
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_STARTER_PRICE_ID
+        sync: false
+      - key: STRIPE_PRO_PRICE_ID
+        sync: false
+
   - type: web
     name: shadowtest-ai-engine
-    env: docker
-    dockerfilePath: apps/ai-engine/Dockerfile
+    runtime: python
+    plan: starter
+    rootDir: ai-engine
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: APP_ENV
+        value: production
+      - key: API_URL
+        value: http://shadowtest-api:4000/api
+      - fromGroup: shadowtest-shared
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: shadowtest-redis
+          property: connectionString
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-5-5
+
+  - type: worker
+    name: shadowtest-simulation-worker
+    runtime: python
+    plan: starter
+    rootDir: ai-engine
+    buildCommand: pip install -r requirements.txt
+    startCommand: python worker.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: APP_ENV
+        value: production
+      - key: API_URL
+        value: http://shadowtest-api:4000/api
+      - fromGroup: shadowtest-shared
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: shadowtest-redis
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-sonnet-5-5

@@ -9,18 +9,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Play, UserCircle2, CheckCircle2, Clock, XCircle, Activity, Loader2, Cpu, Zap, Terminal } from "lucide-react";
-import { api } from "@/lib/api";
+import { ArrowLeft, Play, UserCircle2, CheckCircle2, Clock, XCircle, Activity, Loader2, Zap, Terminal } from "lucide-react";
+import { api, authOptions, type Persona, type Project, type Simulation } from "@/lib/api";
 import { AIThinking } from "@/components/ai-thinking";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function ProjectDetailsPage() {
-    const { userId } = useAuth();
-    const { id } = useParams();
-    const [project, setProject] = useState<any>(null);
-    const [personas, setPersonas] = useState<any[]>([]);
-    const [simulations, setSimulations] = useState<any[]>([]);
+    const { getToken } = useAuth();
+    const { id } = useParams<{ id: string }>();
+    const [project, setProject] = useState<Project | null>(null);
+    const [personas, setPersonas] = useState<Persona[]>([]);
+    const [simulations, setSimulations] = useState<Simulation[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
 
     // Launch Form State
     const [selectedPersona, setSelectedPersona] = useState("");
@@ -29,23 +30,25 @@ export default function ProjectDetailsPage() {
 
     const fetchData = useCallback(async () => {
         try {
-            const headers = { 'x-user-id': userId || '' };
+            setError("");
+            const options = authOptions(await getToken());
             const [projData, simData] = await Promise.all([
-                api.projects.get(id as string, { headers }),
-                api.projects.getSimulations(id as string, { headers })
+                api.projects.get(id, options),
+                api.projects.getSimulations(id, options)
             ]);
             setProject(projData);
             setSimulations(simData);
             setPersonas(projData.personas || []);
-            if (projData.personas?.length > 0 && !selectedPersona) {
-                setSelectedPersona(projData.personas[0].id);
+            const projectPersonas = projData.personas || [];
+            if (projectPersonas.length > 0 && !selectedPersona) {
+                setSelectedPersona(projectPersonas[0].id);
             }
         } catch (error) {
-            console.error("Failed to fetch project data:", error);
+            setError(error instanceof Error ? error.message : "Unable to load project data.");
         } finally {
             setLoading(false);
         }
-    }, [id, selectedPersona, userId]);
+    }, [getToken, id, selectedPersona]);
 
     useEffect(() => {
         fetchData();
@@ -53,7 +56,7 @@ export default function ProjectDetailsPage() {
 
     // Poll for running simulations
     useEffect(() => {
-        const hasRunningSim = simulations.some(s => s.status === "RUNNING");
+        const hasRunningSim = simulations.some(s => s.status === "RUNNING" || s.status === "PENDING");
         if (!hasRunningSim) return;
 
         const interval = setInterval(() => {
@@ -71,13 +74,24 @@ export default function ProjectDetailsPage() {
                 projectId: id,
                 personaId: selectedPersona,
                 task
-            }, {
-                headers: { 'x-user-id': userId || '' }
-            });
+            }, authOptions(await getToken()));
             setTask("");
-            fetchData();
+            await fetchData();
         } catch (error) {
-            console.error("Launch failed:", error);
+            setError(error instanceof Error ? error.message : "Unable to start the simulation.");
+        } finally {
+            setIsLaunching(false);
+        }
+    };
+
+    const handleRetry = async (simulation: Simulation) => {
+        setIsLaunching(true);
+        setError("");
+        try {
+            await api.simulations.retry(simulation.id, authOptions(await getToken()));
+            await fetchData();
+        } catch (error) {
+            setError(error instanceof Error ? error.message : "Unable to retry the simulation.");
         } finally {
             setIsLaunching(false);
         }
@@ -95,6 +109,7 @@ export default function ProjectDetailsPage() {
 
     return (
         <div className="flex flex-col gap-10 max-w-6xl mx-auto">
+            {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
             <header className="space-y-4">
                 <Link href="/dashboard" className="text-[10px] font-mono text-zinc-500 uppercase tracking-[0.3em] flex items-center hover:text-primary transition-colors group w-fit">
                     <ArrowLeft className="mr-2 h-3 w-3 group-hover:-translate-x-1 transition-transform" />
@@ -184,14 +199,14 @@ export default function ProjectDetailsPage() {
                                     </CardHeader>
                                     <CardContent className="p-0">
                                         <div className="max-h-[500px] overflow-auto bg-black/40 px-8 py-6 custom-scrollbar">
-                                            {activeSimulation.status === 'RUNNING' && activeSimulation.steps?.length === 0 && (
+                                            {(activeSimulation.status === 'RUNNING' || activeSimulation.status === 'PENDING') && activeSimulation.steps?.length === 0 && (
                                                 <div className="py-12 flex flex-col items-center">
                                                     <AIThinking />
                                                     <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-[0.3em] -mt-4 animate-pulse">Initializing Environment...</p>
                                                 </div>
                                             )}
                                             <div className="space-y-8">
-                                                {activeSimulation.steps?.sort((a: any, b: any) => a.stepNumber - b.stepNumber).map((step: any, idx: number) => (
+                                                {[...(activeSimulation.steps || [])].sort((a, b) => a.stepNumber - b.stepNumber).map((step, idx) => (
                                                     <motion.div 
                                                         key={step.id} 
                                                         initial={{ opacity: 0, x: -10 }}
@@ -200,7 +215,7 @@ export default function ProjectDetailsPage() {
                                                         className="relative pl-8 border-l border-white/[0.05]"
                                                     >
                                                         <div className="absolute -left-[4.5px] top-1.5 h-2 w-2 rounded-full bg-zinc-800 border border-white/[0.1] group-hover:bg-primary transition-colors" />
-                                                        <div className="font-mono text-[10px] text-primary mb-3 uppercase tracking-widest">Step 0{step.stepNumber} // t+{(idx * 1.5).toFixed(1)}s</div>
+                                                        <div className="font-mono text-[10px] text-primary mb-3 uppercase tracking-widest">Step 0{step.stepNumber} · t+{(idx * 1.5).toFixed(1)}s</div>
                                                         <div className="grid gap-3">
                                                             {step.observation && (
                                                                 <div className="flex gap-4">
@@ -223,10 +238,22 @@ export default function ProjectDetailsPage() {
                                                                     <span className="text-[10px] font-mono text-primary/60 uppercase">Executing Command</span>
                                                                 </div>
                                                             )}
+                                                            {step.decision && (
+                                                                <div className="flex gap-4">
+                                                                    <span className="text-[10px] font-mono text-zinc-600 uppercase w-20 shrink-0 mt-1">Decision</span>
+                                                                    <p className="text-zinc-300 text-sm font-light leading-relaxed">{step.decision}</p>
+                                                                </div>
+                                                            )}
+                                                            {step.outcome && (
+                                                                <div className="flex gap-4">
+                                                                    <span className="text-[10px] font-mono text-zinc-600 uppercase w-20 shrink-0 mt-1">Outcome</span>
+                                                                    <p className="text-zinc-300 text-sm font-light leading-relaxed">{step.outcome}</p>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </motion.div>
                                                 ))}
-                                                {activeSimulation.status === 'RUNNING' && activeSimulation.steps?.length > 0 && (
+                                                {(activeSimulation.status === 'RUNNING' || activeSimulation.status === 'PENDING') && (activeSimulation.steps?.length ?? 0) > 0 && (
                                                     <div className="flex items-center gap-4 pl-8">
                                                         <Loader2 className="h-4 w-4 animate-spin text-primary/40" />
                                                         <span className="text-[10px] font-mono text-zinc-600 uppercase tracking-widest animate-pulse">Computing Next Move...</span>
@@ -237,6 +264,15 @@ export default function ProjectDetailsPage() {
                                                         <CheckCircle2 className="h-8 w-8 text-emerald-500 mx-auto" />
                                                         <h4 className="text-lg font-bold text-white tracking-tight">Loop Terminated Successfully</h4>
                                                         <p className="text-zinc-400 text-sm">Synthetic user has completed the objective within 12 cycles.</p>
+                                                    </div>
+                                                )}
+                                                {activeSimulation.status === 'FAILED' && (
+                                                    <div className="flex flex-col items-center gap-3 py-6">
+                                                        <p className="text-sm text-zinc-400">This run failed. You can retry it without losing its history.</p>
+                                                        <Button variant="outline" disabled={isLaunching} onClick={() => void handleRetry(activeSimulation)}>
+                                                            {isLaunching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                                            Retry simulation
+                                                        </Button>
                                                     </div>
                                                 )}
                                             </div>

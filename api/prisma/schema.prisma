@@ -9,11 +9,13 @@ datasource db {
 }
 
 model User {
-  id        String    @id // Use Clerk ID directly
-  email     String    @unique
-  createdAt DateTime  @default(now())
+  id               String         @id // Use Clerk ID directly
+  email            String?        @unique
+  stripeCustomerId String?        @unique
+  createdAt        DateTime       @default(now())
   
-  projects  Project[]
+  projects      Project[]
+  subscription Subscription?
 }
 
 model Project {
@@ -28,6 +30,8 @@ model Project {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   personas    Persona[]
   simulations Simulation[]
+
+  @@index([userId, createdAt])
 }
 
 model Persona {
@@ -40,6 +44,8 @@ model Persona {
 
   project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   simulations Simulation[]
+
+  @@index([projectId])
 }
 
 model Simulation {
@@ -48,12 +54,16 @@ model Simulation {
   personaId String
   task      String
   status    String   @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
+  success   Boolean?
   createdAt DateTime @default(now())
 
   project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   persona   Persona   @relation(fields: [personaId], references: [id], onDelete: Cascade)
   steps     SimulationStep[]
   reports   Report[]
+
+  @@index([projectId, createdAt])
+  @@index([personaId])
 }
 
 model SimulationStep {
@@ -68,6 +78,8 @@ model SimulationStep {
   createdAt      DateTime @default(now())
 
   simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  @@index([simulationId, stepNumber])
 }
 
 model Report {
@@ -78,4 +90,26 @@ model Report {
   createdAt    DateTime @default(now())
 
   simulation Simulation @relation(fields: [simulationId], references: [id], onDelete: Cascade)
+
+  @@index([simulationId])
+}
+
+model Subscription {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  stripeSubscriptionId String?  @unique
+  plan                 String   @default("FREE")
+  status               String   @default("FREE")
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model BillingEvent {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  type      String
+  createdAt DateTime @default(now())
 }

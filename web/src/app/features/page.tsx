@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Zap, Brain, Activity, ChartSpline, Code, Cpu, MousePointer2, Target, Sparkles } from "lucide-react";
+import { Brain, Activity, Cpu, Target, Sparkles } from "lucide-react";
 import { motion } from "framer-motion";
 
 export default function FeaturesPage() {
@@ -42,7 +42,7 @@ export default function FeaturesPage() {
                             Neural Behavioral <br /><span className="text-zinc-500">Synthesis Engine.</span>
                         </h1>
                         <p className="text-xl text-zinc-400 max-w-2xl font-light leading-relaxed">
-                            ShadowTest isn't just a crawler. It's a high-fidelity simulation environment where synthetic personas reason, react, and report on your UX.
+                            ShadowTest combines public page text, optional repository README context, and task-specific personas to produce inspectable usability walkthroughs.
                         </p>
                     </div>
 
@@ -56,7 +56,7 @@ export default function FeaturesPage() {
                                 <Brain className="h-10 w-10 text-primary mb-6 opacity-80" />
                                 <h3 className="text-2xl font-bold text-white mb-4">Synthetic Persona Matrix</h3>
                                 <p className="text-zinc-400 font-light leading-relaxed max-w-md">
-                                    Simulate diverse user segments from "Impatient Developers" to "Non-technical C-Suite". Each persona operates with custom technical literacy and risk tolerance.
+                                    Create project-specific persona profiles with traits that guide how the model interprets and evaluates the supplied product context.
                                 </p>
                             </div>
                             <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-primary/5 to-transparent pointer-events-none" />
@@ -70,7 +70,7 @@ export default function FeaturesPage() {
                             <Target className="h-10 w-10 text-zinc-500 mb-6" />
                             <div>
                                 <h3 className="text-xl font-bold text-white mb-2">Goal-Oriented Logic</h3>
-                                <p className="text-zinc-500 text-sm font-light">Defined tasks are processed through cognitive loops: Observe &gt; Interpret &gt; Act.</p>
+                                <p className="text-zinc-500 text-sm font-light">Each task is evaluated through a trace of observation, interpretation, decision, action, and outcome.</p>
                             </div>
                         </motion.div>
 
@@ -81,7 +81,7 @@ export default function FeaturesPage() {
                         >
                             <Activity className="h-10 w-10 text-primary mb-6" />
                             <h3 className="text-xl font-bold text-white mb-2">Live Trace Logging</h3>
-                            <p className="text-zinc-500 text-sm font-light">Real-time breakdown of every interpretation error and friction point encounter.</p>
+                            <p className="text-zinc-500 text-sm font-light">Review persisted simulation steps and model-reported friction points in the dashboard.</p>
                         </motion.div>
 
                         {/* Bento Item 4 */}
@@ -93,7 +93,7 @@ export default function FeaturesPage() {
                             <div className="space-y-4">
                                 <h3 className="text-2xl font-bold text-white">Seamless Infrastructure Integration</h3>
                                 <p className="text-zinc-400 font-light max-w-lg">
-                                    Connect your GitHub repositories or live URLs. ShadowTest automatically maps your DOM and initializes neural testing protocols.
+                                    Add a public HTTPS product URL and/or public GitHub repository. The walkthrough reads page text and same-host navigation links; it does not operate controls or submit forms.
                                 </p>
                                 <div className="pt-6 flex gap-4">
                                     <div className="h-2 w-24 rounded-full bg-primary/20" />

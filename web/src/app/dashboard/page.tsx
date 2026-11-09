@@ -5,22 +5,34 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, FolderGit2, Activity, Cpu, ArrowUpRight } from "lucide-react";
-import { api } from "@/lib/api";
+import { Plus, Cpu, ArrowUpRight } from "lucide-react";
+import { api, authOptions, type Project } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
 
 export default function DashboardPage() {
-    const { userId } = useAuth();
-    const [projects, setProjects] = useState<any[]>([]);
+    const { isLoaded, userId, getToken } = useAuth();
+    const [projects, setProjects] = useState<Project[]>([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
 
     useEffect(() => {
-        if (!userId) return;
-        api.projects.list({ headers: { 'x-user-id': userId } })
-            .then(setProjects)
-            .finally(() => setLoading(false));
-    }, [userId]);
+        if (!isLoaded || !userId) return;
+        let cancelled = false;
+        const loadProjects = async () => {
+            try {
+                const token = await getToken();
+                const result = await api.projects.list(authOptions(token));
+                if (!cancelled) setProjects(result);
+            } catch (loadError) {
+                if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load projects.");
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        };
+        void loadProjects();
+        return () => { cancelled = true; };
+    }, [getToken, isLoaded, userId]);
 
     return (
         <div className="flex flex-col gap-10">
@@ -36,6 +48,16 @@ export default function DashboardPage() {
                     </Button>
                 </Link>
             </div>
+
+            {error && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
+            {!loading && projects.length === 0 && (
+                <section className="rounded-3xl border border-primary/20 bg-primary/[0.03] p-8">
+                    <h2 className="text-2xl font-semibold text-white">Welcome to ShadowTest</h2>
+                    <p className="mt-2 max-w-2xl text-sm text-zinc-400">
+                        Create a project, choose a persona, and run a read-only behavioral walkthrough of your product.
+                    </p>
+                </section>
+            )}
 
             {loading ? (
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
