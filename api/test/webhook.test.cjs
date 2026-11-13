@@ -31,4 +31,17 @@ test('Stripe webhook route receives the raw request body before JSON parsing', a
     });
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), { error: 'Invalid Stripe webhook signature.' });
+
+    const versionedResponse = await fetch(`http://127.0.0.1:${address.port}/api/v1/webhooks/stripe`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Stripe-Signature': 'invalid'
+        },
+        body: JSON.stringify({ id: 'evt_test', type: 'customer.subscription.updated' })
+    });
+    const versionedBody = await versionedResponse.json();
+    assert.equal(versionedResponse.status, 400);
+    assert.equal(versionedBody.error.message, 'Invalid Stripe webhook signature.');
+    assert.equal(versionedBody.error.requestId, versionedResponse.headers.get('x-request-id'));
 });

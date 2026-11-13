@@ -1,5 +1,14 @@
 const API_URL = '/api/proxy';
 
+interface ApiSuccess<T> {
+    data: T;
+    requestId: string;
+}
+
+interface ApiError {
+    error?: string | { message?: string };
+}
+
 export interface Persona {
     id: string;
     projectId: string;
@@ -149,12 +158,20 @@ export async function fetcher<T>(url: string, options: RequestInit = {}): Promis
     });
 
     if (!res.ok) {
-        const payload: { error?: string } | null = await res.json().catch(() => null);
-        throw new Error(payload?.error || `Request failed (${res.status})`);
+        const payload: ApiError | null = await res.json().catch(() => null);
+        const error = payload?.error;
+        const message = typeof error === 'string'
+            ? error
+            : error?.message;
+        throw new Error(message || `Request failed (${res.status})`);
     }
 
     if (res.status === 204) return undefined as T;
-    return res.json() as Promise<T>;
+    const payload = await res.json() as ApiSuccess<T>;
+    if (!payload || !('data' in payload) || typeof payload.requestId !== 'string') {
+        throw new Error('The API returned an invalid response. Please retry or contact support.');
+    }
+    return payload.data;
 }
 
 export function authOptions(token: string | null): RequestInit {

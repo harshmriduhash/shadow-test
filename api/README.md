@@ -1,10 +1,17 @@
 # ShadowTest API
 
-The Express API authenticates Clerk bearer tokens, scopes product data to the
-authenticated user, persists projects/personas/simulations/reports with Prisma,
-enforces subscription limits, and dispatches simulations to the AI service.
-Internal AI callbacks require the shared `INTERNAL_API_KEY`; client-supplied
-user IDs are not trusted.
+The Express API authenticates Clerk bearer tokens, persists
+projects/personas/simulations/reports with Prisma, enforces subscription
+limits, and dispatches simulations to the AI service. Internal AI callbacks
+require the shared `INTERNAL_API_KEY`; client-supplied user IDs are not trusted.
+
+`/api/v1` is the canonical versioned API. JSON success responses use
+`{ "data": ..., "requestId": "..." }`; errors use
+`{ "error": { "code": "...", "message": "...", "requestId": "..." } }`.
+The `X-Request-Id` header is accepted when it contains a bounded safe value;
+otherwise the API creates a UUID. Existing unversioned `/api` routes remain
+available during the client migration and retain their existing response
+shape. The web proxy forwards request IDs and uses `/api/v1`.
 
 ## Local development
 
@@ -22,6 +29,10 @@ user IDs are not trusted.
 4. Start the API:
    ```sh
    npm run dev
+   ```
+5. Run the API build and tests:
+   ```sh
+   npm test
    ```
 
 The Redis URL is optional for local development; without it the rate limiter

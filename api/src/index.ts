@@ -7,6 +7,7 @@ import { createClient } from 'redis';
 import { PrismaClient } from '@prisma/client';
 import { billingRouter, stripeWebhookHandler } from './billing';
 import { createApiResponseCache } from './cache';
+import { requestContext, versionedApiEnvelope } from './request-context';
 import apiRoutes from './routes';
 
 dotenv.config();
@@ -23,6 +24,8 @@ const redisClient = process.env.REDIS_URL ? createClient({ url: process.env.REDI
 redisClient?.on('error', error => console.error('Redis connection error:', error));
 
 app.set('trust proxy', 1);
+app.use(requestContext);
+app.use('/api/v1', versionedApiEnvelope);
 app.use(cors({
     origin(origin, callback) {
         if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
@@ -43,10 +46,16 @@ const apiRateLimit = rateLimit({
 });
 
 app.post('/api/billing/webhook', apiRateLimit, express.raw({ type: 'application/json' }), stripeWebhookHandler);
+app.post('/api/v1/webhooks/stripe', apiRateLimit, express.raw({ type: 'application/json' }), stripeWebhookHandler);
 app.use(express.json({ limit: '1mb' }));
 app.use(apiRateLimit);
 app.use('/api', createApiResponseCache(redisClient));
 
+app.use('/api/v1', apiRoutes);
+app.use('/api/v1/billing', billingRouter);
+app.use('/api/v1', (_req, res) => {
+    res.status(404).json({ error: { code: 'NOT_FOUND', message: 'API route not found' } });
+});
 app.use('/api', apiRoutes);
 app.use('/api/billing', billingRouter);
 
