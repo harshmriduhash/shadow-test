@@ -13,7 +13,7 @@ const {
     simulationStepSchema,
     reportShareCreateSchema
 } = require('../dist/schemas.js');
-const { getPlanUsage } = require('../dist/plans.js');
+const { createSimulationWithinQuota, getPlanUsage } = require('../dist/plans.js');
 
 test('project creation accepts required details and optional URLs', () => {
     const result = projectCreateSchema.safeParse({
@@ -143,34 +143,34 @@ test('report share links are limited to 1, 7, or 30 day expiration periods', () 
     assert.equal(reportShareCreateSchema.safeParse({ expiresInDays: 2 }).success, false);
 });
 
-test('new accounts use free plan quotas and UTC month usage', async () => {
-    let monthFilter;
+test('organizations use free plan quotas and UTC month usage', async () => {
+    let periodStart;
     const prisma = {
         subscription: { findUnique: async () => null },
         project: { count: async () => 1 },
-        simulation: {
-            count: async ({ where }) => {
-                monthFilter = where.createdAt.gte;
-                return 2;
+        usageRecord: {
+            findUnique: async ({ where }) => {
+                periodStart = where.organizationId_periodStart.periodStart;
+                return { simulationsUsed: 2 };
             }
         }
     };
-    const usage = await getPlanUsage(prisma, 'user', new Date('2026-06-15T12:00:00Z'));
+    const usage = await getPlanUsage(prisma, 'org', new Date('2026-06-15T12:00:00Z'));
     assert.equal(usage.plan, 'FREE');
     assert.equal(usage.limits.projects, 1);
     assert.equal(usage.limits.simulationsPerMonth, 3);
     assert.equal(usage.canCreateProject, false);
     assert.equal(usage.canRunSimulation, true);
-    assert.equal(monthFilter.toISOString(), '2026-06-01T00:00:00.000Z');
+    assert.equal(periodStart.toISOString(), '2026-06-01T00:00:00.000Z');
 });
 
 test('active starter subscriptions receive starter quotas', async () => {
     const prisma = {
         subscription: { findUnique: async () => ({ plan: 'STARTER', status: 'ACTIVE' }) },
         project: { count: async () => 2 },
-        simulation: { count: async () => 99 }
+        usageRecord: { findUnique: async () => ({ simulationsUsed: 99 }) }
     };
-    const usage = await getPlanUsage(prisma, 'user');
+    const usage = await getPlanUsage(prisma, 'org');
     assert.equal(usage.plan, 'STARTER');
     assert.equal(usage.canCreateProject, true);
     assert.equal(usage.canRunSimulation, true);
@@ -180,9 +180,48 @@ test('inactive subscriptions fall back to free quotas', async () => {
     const prisma = {
         subscription: { findUnique: async () => ({ plan: 'PRO', status: 'PAST_DUE' }) },
         project: { count: async () => 1 },
-        simulation: { count: async () => 3 }
+        usageRecord: { findUnique: async () => ({ simulationsUsed: 3 }) }
     };
-    const usage = await getPlanUsage(prisma, 'user');
+    const usage = await getPlanUsage(prisma, 'org');
     assert.equal(usage.plan, 'FREE');
     assert.equal(usage.canRunSimulation, false);
+});
+
+test('simulation creation atomically reserves organization quota', async () => {
+    const calls = [];
+    const simulationCreates = [];
+    const makePrisma = simulationsUsed => ({
+        $transaction: async callback => callback({
+            subscription: { findUnique: async () => null },
+            simulation: {
+                create: async ({ data }) => {
+                    simulationCreates.push(data);
+                    return { id: 'simulation' };
+                }
+            },
+            usageRecord: {
+                upsert: async ({ where }) => {
+                    calls.push(where.organizationId_periodStart);
+                    return { id: 'usage', simulationsUsed };
+                },
+                updateMany: async ({ where, data }) => {
+                    calls.push({ where, data });
+                    return { count: simulationsUsed < 3 ? 1 : 0 };
+                }
+            }
+        })
+    });
+
+    const data = { projectId: 'project', personaId: 'persona', task: 'Test', status: 'PENDING' };
+    const allowed = await createSimulationWithinQuota(makePrisma(2), 'org', data, new Date('2026-06-15T12:00:00Z'));
+    assert.equal(allowed.reserved, true);
+    assert.equal(allowed.simulationsUsed, 3);
+    assert.equal(allowed.simulation.id, 'simulation');
+    const blocked = await createSimulationWithinQuota(makePrisma(3), 'org', data, new Date('2026-06-15T12:00:00Z'));
+    assert.equal(blocked.reserved, false);
+    assert.equal(blocked.simulationsUsed, 3);
+    assert.equal(calls[0].periodStart.toISOString(), '2026-06-01T00:00:00.000Z');
+    assert.deepEqual(calls[1].where.simulationsUsed, { lt: 3 });
+    assert.deepEqual(calls[1].data.simulationsUsed, { increment: 1 });
+    assert.equal(simulationCreates.length, 1);
 });

@@ -13,6 +13,13 @@ otherwise the API creates a UUID. Existing unversioned `/api` routes remain
 available during the client migration and retain their existing response
 shape. The web proxy forwards request IDs and uses `/api/v1`.
 
+Projects, memberships, subscriptions, and usage are scoped to the active Clerk
+organization. Users without an active organization receive a stable personal
+workspace. The tenancy migration backfills existing users, projects,
+subscriptions, and current-UTC-month simulation usage. Project creation is
+serialized per organization for project limits; simulation creation reserves
+monthly usage atomically in the same transaction as the simulation record.
+
 ## Local development
 
 1. Copy `.env.example` to `.env` and set PostgreSQL, Clerk, and internal service

@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import { z } from 'zod';
 import { getPlanUsage, normalizePlan, type PlanName } from './plans';
 import { requireSession } from './security';
+import { ensureWorkspace, getWorkspaceId } from './tenant';
 
 const prisma = new PrismaClient();
 const billingRouter = Router();
@@ -30,19 +31,18 @@ function asyncRoute(handler: (req: Request, res: Parameters<RequestHandler>[1]) 
 
 async function ensureUser(req: Request) {
     if (!req.auth) throw new Error('Authenticated user context is missing');
-    return prisma.user.upsert({
-        where: { id: req.auth.userId },
-        create: { id: req.auth.userId, ...(req.auth.email ? { email: req.auth.email } : {}) },
-        update: req.auth.email ? { email: req.auth.email } : {}
-    });
+    await ensureWorkspace(prisma, req.auth);
+    return prisma.user.findUniqueOrThrow({ where: { id: req.auth.userId } });
 }
 
 billingRouter.use(requireSession);
 
 billingRouter.get('/subscription', asyncRoute(async (req, res) => {
-    const user = await ensureUser(req);
-    const plan = await getPlanUsage(prisma, user.id);
-    const subscription = await prisma.subscription.findUnique({ where: { userId: user.id } });
+    await ensureUser(req);
+    if (!req.auth) throw new Error('Authenticated user context is missing');
+    const organizationId = getWorkspaceId(req.auth);
+    const plan = await getPlanUsage(prisma, organizationId);
+    const subscription = await prisma.subscription.findUnique({ where: { organizationId } });
     res.json({
         plan: plan.plan,
         limits: plan.limits,
@@ -57,18 +57,21 @@ billingRouter.post('/checkout', asyncRoute(async (req, res) => {
     if (!parsed.success) return res.status(400).json({ error: 'Select a supported subscription plan.' });
 
     const user = await ensureUser(req);
+    if (!req.auth) throw new Error('Authenticated user context is missing');
+    const organizationId = getWorkspaceId(req.auth);
     const stripe = getStripe();
     const priceId = process.env[`STRIPE_${parsed.data.plan}_PRICE_ID`];
     if (!priceId) return res.status(503).json({ error: `The ${parsed.data.plan} plan is not configured for checkout.` });
 
-    let customerId = user.stripeCustomerId;
+    const organization = await prisma.organization.findUniqueOrThrow({ where: { id: organizationId } });
+    let customerId = organization.stripeCustomerId;
     if (!customerId) {
         const customer = await stripe.customers.create({
             ...(user.email ? { email: user.email } : {}),
-            metadata: { userId: user.id }
+            metadata: { organizationId }
         });
         customerId = customer.id;
-        await prisma.user.update({ where: { id: user.id }, data: { stripeCustomerId: customerId } });
+        await prisma.organization.update({ where: { id: organizationId }, data: { stripeCustomerId: customerId } });
     }
 
     const appUrl = process.env.APP_URL || 'http://localhost:3000';
@@ -78,8 +81,8 @@ billingRouter.post('/checkout', asyncRoute(async (req, res) => {
         line_items: [{ price: priceId, quantity: 1 }],
         success_url: `${appUrl}/dashboard/settings?billing=success`,
         cancel_url: `${appUrl}/pricing?billing=cancelled`,
-        metadata: { userId: user.id, plan: parsed.data.plan },
-        subscription_data: { metadata: { userId: user.id, plan: parsed.data.plan } }
+        metadata: { organizationId, plan: parsed.data.plan },
+        subscription_data: { metadata: { organizationId, plan: parsed.data.plan } }
     });
     if (!session.url) return res.status(502).json({ error: 'Stripe did not return a checkout URL.' });
     res.json({ url: session.url });
@@ -87,7 +90,7 @@ billingRouter.post('/checkout', asyncRoute(async (req, res) => {
 
 async function synchronizeSubscription(
     stripeSubscription: Stripe.Subscription,
-    userId: string,
+    organizationId: string,
     requestedPlan: string | null | undefined
 ) {
     const plan: PlanName = normalizePlan(requestedPlan);
@@ -97,9 +100,9 @@ async function synchronizeSubscription(
             ? 'TRIALING'
             : stripeSubscription.status.toUpperCase();
     await prisma.subscription.upsert({
-        where: { userId },
+        where: { organizationId },
         create: {
-            userId,
+            organizationId,
             stripeSubscriptionId: stripeSubscription.id,
             plan,
             status,
@@ -112,6 +115,16 @@ async function synchronizeSubscription(
             currentPeriodEnd: new Date(stripeSubscription.current_period_end * 1000)
         }
     });
+}
+
+function organizationIdFromMetadata(metadata: Stripe.Metadata | null | undefined) {
+    if (typeof metadata?.organizationId === 'string' && metadata.organizationId.length > 0) {
+        return metadata.organizationId;
+    }
+    if (typeof metadata?.userId === 'string' && metadata.userId.length > 0) {
+        return `personal_${metadata.userId}`;
+    }
+    return undefined;
 }
 
 export const stripeWebhookHandler: RequestHandler = (req, res, next) => {
@@ -143,17 +156,17 @@ export const stripeWebhookHandler: RequestHandler = (req, res, next) => {
             const subscriptionId = typeof session.subscription === 'string'
                 ? session.subscription
                 : session.subscription?.id;
-            const userId = session.metadata?.userId;
-            if (subscriptionId && userId) {
+            const organizationId = organizationIdFromMetadata(session.metadata);
+            if (subscriptionId && organizationId) {
                 const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-                await synchronizeSubscription(subscription, userId, session.metadata?.plan);
+                await synchronizeSubscription(subscription, organizationId, session.metadata?.plan);
             }
         } else if (event.type === 'customer.subscription.updated' || event.type === 'customer.subscription.deleted') {
             const subscription = event.data.object as Stripe.Subscription;
-            const userId = subscription.metadata.userId;
-            if (userId) {
+            const organizationId = organizationIdFromMetadata(subscription.metadata);
+            if (organizationId) {
                 const plan = event.type === 'customer.subscription.deleted' ? 'FREE' : subscription.metadata.plan;
-                await synchronizeSubscription(subscription, userId, plan);
+                await synchronizeSubscription(subscription, organizationId, plan);
             }
         }
 

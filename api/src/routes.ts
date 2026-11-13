@@ -5,8 +5,9 @@ import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
 import { requireInternalAuth, requireSession } from './security';
+import { canManageTenantProject, ensureWorkspace, getWorkspaceId, projectScopeWhere as tenantProjectScopeWhere } from './tenant';
 import { dashboardSearchSchema, documentSearchSchema, documentStatusSchema, documentUploadSchema, paginationSchema, personaCreateSchema, personaUpdateSchema, projectCreateSchema, projectUpdateSchema, reportShareCreateSchema, simulationReportSchema, simulationStartSchema, simulationStatusSchema, simulationStepSchema } from './schemas';
-import { getPlanUsage } from './plans';
+import { createSimulationWithinQuota, getPlanUsage, releaseSimulationUsage } from './plans';
 import { cursorArgs, cursorPage } from './pagination';
 import { createReportShareToken, hashReportShareToken, isReportShareToken, reportShareExpiry } from './report-sharing';
 
@@ -59,33 +60,21 @@ function routeParam(req: Request, name: string) {
 
 async function ensureUser(req: Request) {
     if (!req.auth) throw new Error('Authenticated user context is missing');
-    await prisma.user.upsert({
-        where: { id: req.auth.userId },
-        create: { id: req.auth.userId, ...(req.auth.email ? { email: req.auth.email } : {}) },
-        update: req.auth.email ? { email: req.auth.email } : {}
-    });
-    return req.auth.userId;
+    const workspace = await ensureWorkspace(prisma, req.auth);
+    return workspace.userId;
 }
 
 function projectScopeWhere(req: Request): Prisma.ProjectWhereInput {
-    const userId = req.auth?.userId;
-    if (!userId) throw new Error('Authenticated user context is missing');
-    return {
-        OR: [
-            { userId },
-            ...(req.auth?.organizationId ? [{ organizationId: req.auth.organizationId }] : [])
-        ]
-    };
+    if (!req.auth) throw new Error('Authenticated user context is missing');
+    return tenantProjectScopeWhere(getWorkspaceId(req.auth));
 }
 
 function canManageProject(
     req: Request,
-    project: { userId: string; organizationId: string | null }
+    project: { userId: string; organizationId: string }
 ) {
     if (!req.auth) return false;
-    if (!project.organizationId) return project.userId === req.auth.userId;
-    return project.organizationId === req.auth.organizationId
-        && (req.auth.organizationRole === 'org:admin' || req.auth.organizationRole === 'org:owner');
+    return canManageTenantProject(req.auth, project);
 }
 
 async function dispatchSimulation(
@@ -340,13 +329,15 @@ router.get('/search', asyncHandler(async (req, res) => {
 
 router.get('/workspace/access', asyncHandler(async (req, res) => {
     await ensureUser(req);
-    const organizationId = req.auth?.organizationId || null;
-    const canManage = !organizationId
+    if (!req.auth) throw new Error('Authenticated user context is missing');
+    const organizationId = getWorkspaceId(req.auth);
+    const isPersonal = !req.auth.organizationId;
+    const canManage = isPersonal
         || req.auth?.organizationRole === 'org:admin'
         || req.auth?.organizationRole === 'org:owner';
     res.json({
         organizationId,
-        role: organizationId ? req.auth?.organizationRole || 'org:member' : 'personal owner',
+        role: isPersonal ? 'org:owner' : req.auth?.organizationRole || 'org:member',
         capabilities: {
             viewProjects: true,
             runSimulations: true,
@@ -564,7 +555,7 @@ router.delete('/documents/:id', asyncHandler(async (req, res) => {
 router.get('/projects', asyncHandler(async (req, res) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return invalid(res, 'Invalid pagination parameters', pagination.error.issues);
-    const userId = await ensureUser(req);
+    await ensureUser(req);
     const where = projectScopeWhere(req);
     const [projects, totalCount] = await Promise.all([prisma.project.findMany({
         where,
@@ -590,29 +581,38 @@ router.post('/projects', asyncHandler(async (req, res) => {
     }
 
     const userId = await ensureUser(req);
-    const planUsage = await getPlanUsage(prisma, userId);
-    if (!planUsage.canCreateProject) {
-        return res.status(403).json({ error: `Your ${planUsage.plan} plan allows ${planUsage.limits.projects} project. Upgrade to add another.` });
-    }
+    if (!req.auth) throw new Error('Authenticated user context is missing');
+    const organizationId = getWorkspaceId(req.auth);
     const { productUrl, repoUrl, ...projectData } = parsed.data;
-    const project = await prisma.project.create({
-        data: {
-            ...projectData,
-            productUrl: productUrl || null,
-            repoUrl: repoUrl || null,
-            userId,
-            organizationId: req.auth?.organizationId || null,
-            personas: {
-                create: [
-                    { name: 'Impatient Developer', traits: 'Technical, fast, low patience', behaviorModel: 'claude-sonnet' },
-                    { name: 'Non-technical Founder', traits: 'Business-focused, unfamiliar with technical jargon', behaviorModel: 'claude-sonnet' },
-                    { name: 'Enterprise Buyer', traits: 'Security-conscious, careful decision maker', behaviorModel: 'claude-sonnet' }
-                ]
-            }
-        },
-        include: { personas: true }
+    const creation = await prisma.$transaction(async transaction => {
+        await transaction.$queryRaw<Array<{ id: string }>>`
+            SELECT "id" FROM "Organization" WHERE "id" = ${organizationId} FOR UPDATE
+        `;
+        const planUsage = await getPlanUsage(transaction, organizationId);
+        if (!planUsage.canCreateProject) return { planUsage, project: null };
+        const project = await transaction.project.create({
+            data: {
+                ...projectData,
+                productUrl: productUrl || null,
+                repoUrl: repoUrl || null,
+                userId,
+                organizationId,
+                personas: {
+                    create: [
+                        { name: 'Impatient Developer', traits: 'Technical, fast, low patience', behaviorModel: 'claude-sonnet' },
+                        { name: 'Non-technical Founder', traits: 'Business-focused, unfamiliar with technical jargon', behaviorModel: 'claude-sonnet' },
+                        { name: 'Enterprise Buyer', traits: 'Security-conscious, careful decision maker', behaviorModel: 'claude-sonnet' }
+                    ]
+                }
+            },
+            include: { personas: true }
+        });
+        return { planUsage, project };
     });
-    res.status(201).json(project);
+    if (!creation.project) {
+        return res.status(403).json({ error: `Your ${creation.planUsage.plan} plan allows ${creation.planUsage.limits.projects} project. Upgrade to add another.` });
+    }
+    res.status(201).json(creation.project);
 }));
 
 router.get('/projects/:projectId', asyncHandler(async (req, res) => {
@@ -899,7 +899,7 @@ router.post('/simulations/start', asyncHandler(async (req, res) => {
     const parsed = simulationStartSchema.safeParse(req.body);
     if (!parsed.success) return invalid(res, 'Invalid simulation request', parsed.error.issues);
 
-    const userId = await ensureUser(req);
+    await ensureUser(req);
     const project = await prisma.project.findFirst({
         where: { id: parsed.data.projectId, ...projectScopeWhere(req) },
         select: { id: true, productUrl: true, repoUrl: true, description: true }
@@ -911,19 +911,22 @@ router.post('/simulations/start', asyncHandler(async (req, res) => {
     });
     if (!persona) return res.status(404).json({ error: 'Persona not found in this project' });
 
-    const planUsage = await getPlanUsage(prisma, userId);
-    if (!planUsage.canRunSimulation) {
-        return res.status(403).json({ error: `You have reached the ${planUsage.limits.simulationsPerMonth} simulation monthly limit for your ${planUsage.plan} plan.` });
-    }
-
-    const simulation = await prisma.simulation.create({
-        data: { ...parsed.data, status: 'PENDING' }
+    if (!req.auth) throw new Error('Authenticated user context is missing');
+    const organizationId = getWorkspaceId(req.auth);
+    const creation = await createSimulationWithinQuota(prisma, organizationId, {
+        ...parsed.data,
+        status: 'PENDING'
     });
+    if (!creation.reserved) {
+        return res.status(403).json({ error: `You have reached the ${creation.limits.simulationsPerMonth} simulation monthly limit for your ${creation.plan} plan.` });
+    }
+    const simulation = creation.simulation;
     try {
         const started = await dispatchSimulation(simulation.id, project, persona, parsed.data.task);
         res.status(202).json(started);
     } catch (error) {
         await prisma.simulation.update({ where: { id: simulation.id }, data: { status: 'FAILED' } });
+        await releaseSimulationUsage(prisma, organizationId, creation.periodStart);
         console.error(`Failed to contact simulation service for ${simulation.id}:`, error);
         const statusCode = error instanceof SimulationServiceError ? error.statusCode : 502;
         const message = error instanceof SimulationServiceError
@@ -934,21 +937,31 @@ router.post('/simulations/start', asyncHandler(async (req, res) => {
 }));
 
 router.post('/simulations/:id/retry', asyncHandler(async (req, res) => {
-    const userId = await ensureUser(req);
+    await ensureUser(req);
+    if (!req.auth) throw new Error('Authenticated user context is missing');
     const previous = await prisma.simulation.findFirst({
         where: { id: routeParam(req, 'id'), status: 'FAILED', project: projectScopeWhere(req) },
         include: { project: true, persona: true }
     });
     if (!previous) return res.status(404).json({ error: 'Failed simulation not found' });
 
-    const retry = await prisma.simulation.create({
-        data: { projectId: previous.projectId, personaId: previous.personaId, task: previous.task, status: 'PENDING' }
+    const organizationId = getWorkspaceId(req.auth);
+    const creation = await createSimulationWithinQuota(prisma, organizationId, {
+        projectId: previous.projectId,
+        personaId: previous.personaId,
+        task: previous.task,
+        status: 'PENDING'
     });
+    if (!creation.reserved) {
+        return res.status(403).json({ error: `You have reached the ${creation.limits.simulationsPerMonth} simulation monthly limit for your ${creation.plan} plan.` });
+    }
+    const retry = creation.simulation;
     try {
         const started = await dispatchSimulation(retry.id, previous.project, previous.persona, retry.task);
         res.status(202).json(started);
     } catch (error) {
         await prisma.simulation.update({ where: { id: retry.id }, data: { status: 'FAILED' } });
+        await releaseSimulationUsage(prisma, organizationId, creation.periodStart);
         console.error(`Failed to retry simulation ${previous.id}:`, error);
         const statusCode = error instanceof SimulationServiceError ? error.statusCode : 502;
         const message = error instanceof SimulationServiceError

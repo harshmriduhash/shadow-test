@@ -15,14 +15,62 @@ model User {
   createdAt        DateTime       @default(now())
   
   projects      Project[]
-  subscription Subscription?
+  subscriptions Subscription[]
   reportShares  ReportShare[]
+  memberships   Membership[]
+}
+
+model Organization {
+  id              String   @id
+  name            String
+  isPersonal      Boolean  @default(false) @map("is_personal")
+  stripeCustomerId String? @unique @map("stripe_customer_id")
+  deletedAt       DateTime? @map("deleted_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  memberships   Membership[]
+  projects      Project[]
+  usageRecords  UsageRecord[]
+  subscription  Subscription?
+
+  @@index([deletedAt])
+}
+
+model Membership {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  userId         String   @map("user_id")
+  role           String   @default("org:member")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model UsageRecord {
+  id              String   @id @default(cuid())
+  organizationId  String   @map("organization_id")
+  periodStart     DateTime @db.Date @map("period_start")
+  simulationsUsed Int      @default(0) @map("simulations_used")
+  costUsd         Decimal  @default(0) @db.Decimal(12, 6) @map("cost_usd")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, periodStart])
+  @@index([organizationId, periodStart])
 }
 
 model Project {
   id          String   @id @default(cuid())
   userId      String
-  organizationId String? @map("organization_id")
+  organizationId String @map("organization_id")
   name        String
   description String?
   repoUrl     String?  @map("repo_url")
@@ -30,6 +78,7 @@ model Project {
   createdAt   DateTime @default(now())
 
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   personas    Persona[]
   simulations Simulation[]
   documents   ProjectDocument[]
@@ -157,7 +206,8 @@ model ReportShare {
 
 model Subscription {
   id                   String   @id @default(cuid())
-  userId               String   @unique
+  userId               String?
+  organizationId       String   @unique @map("organization_id")
   stripeSubscriptionId String?  @unique
   plan                 String   @default("FREE")
   status               String   @default("FREE")
@@ -165,7 +215,8 @@ model Subscription {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 }
 
 model BillingEvent {

@@ -9,6 +9,7 @@ declare global {
                 userId: string;
                 email?: string;
                 organizationId?: string;
+                organizationName?: string;
                 organizationRole?: string;
             };
         }
@@ -31,6 +32,7 @@ export async function verifySessionToken(token: string): Promise<{
     userId: string;
     email?: string;
     organizationId?: string;
+    organizationName?: string;
     organizationRole?: string;
 }> {
     const verificationOptions: { issuer?: string; audience?: string } = {};
@@ -43,11 +45,13 @@ export async function verifySessionToken(token: string): Promise<{
 
     const email = getEmail(payload);
     const organizationId = typeof payload.org_id === 'string' ? payload.org_id : undefined;
+    const organizationName = typeof payload.org_name === 'string' ? payload.org_name : undefined;
     const organizationRole = typeof payload.org_role === 'string' ? payload.org_role : undefined;
     return {
         userId,
         ...(email ? { email } : {}),
         ...(organizationId ? { organizationId } : {}),
+        ...(organizationName ? { organizationName } : {}),
         ...(organizationRole ? { organizationRole } : {})
     };
 }
