@@ -96,6 +96,7 @@ review. Track the result over several projects before making an ROI claim.
 - Browse large project, persona, simulation, report, and document lists with
   cursor-based pagination.
 - Export reports to CSV.
+- Create revocable report links that expire after 1, 7, or 30 days.
 - Use Redis-backed job queues, retry failed simulations, and apply plan limits.
 - Optionally connect Stripe subscriptions.
 
@@ -303,6 +304,9 @@ The API readiness response separately reports database, Redis, worker,
 authentication, AI, object-storage, and vector-search health. The worker
 refreshes a short-lived Redis heartbeat while idle or processing a job, so
 readiness does not mistake a reachable queue for a running simulation worker.
+Apply the report-sharing migration before using shared report links; public
+links are bearer links, are not indexed, and should only be sent to intended
+recipients.
 
 ## Trust, safety, and current limits
 

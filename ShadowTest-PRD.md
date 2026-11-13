@@ -199,7 +199,7 @@ Examples
 
 ## 7.4 Simulation Engine
 
-The AI performs a bounded behavioral walkthrough in an isolated browser using public page content, same-site links, project context, and optional documentation. It may open semantic tabs and disclosure panels. It does not sign in, submit forms, make purchases, or change product data.
+The AI performs a bounded behavioral walkthrough in an isolated browser using public page content, same-site links, project context, and optional documentation. It may open semantic tabs and disclosure panels. It does not sign in, submit forms, make purchases, or change product data. Authenticated or mutating flows require an explicitly authorized staging/sandbox target and are not enabled for arbitrary public or production sites.
 
 The AI evaluates the experience using this reasoning loop:
 
@@ -222,7 +222,10 @@ Simulation results include
 • friction points  
 • potential abandonment risks (predictions, not observed user behavior)
 
-Reports can be exported or shared.
+Reports can be exported or shared. The application supports CSV export and
+revocable, bearer-token report links that expire after 1, 7, or 30 days.
+Shared links expose the report trace and evidence to anyone who has the link;
+owners should only send them to intended recipients.
 
 Structured UX events include an event type, severity, step number, description, and supporting evidence. Events are scoped to the synthetic walkthrough and are not represented as real-user analytics.
 

@@ -79,6 +79,7 @@ app.get('/health/ready', async (_req, res) => {
             const schema = await readinessPrisma.$queryRaw<Array<{
                 personaProfile: boolean;
                 simulationEvents: boolean;
+                reportShares: boolean;
             }>>`
                 SELECT
                     EXISTS (
@@ -91,9 +92,14 @@ app.get('/health/ready', async (_req, res) => {
                         SELECT 1 FROM information_schema.tables
                         WHERE table_schema = current_schema()
                           AND table_name = 'SimulationEvent'
-                    ) AS "simulationEvents"
+                    ) AS "simulationEvents",
+                    EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = current_schema()
+                          AND table_name = 'ReportShare'
+                    ) AS "reportShares"
             `;
-            if (!schema[0]?.personaProfile || !schema[0]?.simulationEvents) {
+            if (!schema[0]?.personaProfile || !schema[0]?.simulationEvents || !schema[0]?.reportShares) {
                 throw new Error('Required Prisma migrations have not been applied');
             }
         }),

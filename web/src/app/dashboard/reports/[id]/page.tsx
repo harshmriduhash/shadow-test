@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { api, authOptions, type Report } from "@/lib/api";
+import { api, authOptions, type Report, type ReportShare } from "@/lib/api";
 
 function decodeInsights(value: string | null) {
     if (!value) return { items: [], error: "" };
@@ -25,19 +25,70 @@ export default function ReportDetailsPage() {
     const { id } = useParams<{ id: string }>();
     const [report, setReport] = useState<Report | null>(null);
     const [error, setError] = useState("");
+    const [shareError, setShareError] = useState("");
+    const [shares, setShares] = useState<ReportShare[]>([]);
+    const [shareUrl, setShareUrl] = useState("");
+    const [shareExpiry, setShareExpiry] = useState<1 | 7 | 30>(7);
+    const [shareBusy, setShareBusy] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
         void (async () => {
             try {
-                const value = await api.reports.get(id, authOptions(await getToken()));
+                const options = authOptions(await getToken());
+                const value = await api.reports.get(id, options);
                 if (!cancelled) setReport(value);
+                try {
+                    const activeShares = await api.reports.listShares(id, options);
+                    if (!cancelled) setShares(activeShares);
+                } catch (shareLoadError) {
+                    if (!cancelled) setShareError(shareLoadError instanceof Error ? shareLoadError.message : "Report sharing is unavailable for this workspace role.");
+                }
             } catch (loadError) {
                 if (!cancelled) setError(loadError instanceof Error ? loadError.message : "Unable to load this report.");
             }
         })();
         return () => { cancelled = true; };
     }, [getToken, id]);
+
+    const createShare = async () => {
+        setShareBusy(true);
+        setShareError("");
+        setShareUrl("");
+        try {
+            const options = authOptions(await getToken());
+            const result = await api.reports.createShare(id, shareExpiry, options);
+            setShareUrl(result.url);
+            setShares(await api.reports.listShares(id, options));
+        } catch (shareError) {
+            setShareError(shareError instanceof Error ? shareError.message : "Unable to create a share link.");
+        } finally {
+            setShareBusy(false);
+        }
+    };
+
+    const revokeShare = async (shareId: string) => {
+        setShareBusy(true);
+        setShareError("");
+        try {
+            const options = authOptions(await getToken());
+            await api.reports.revokeShare(id, shareId, options);
+            setShares(await api.reports.listShares(id, options));
+            setShareUrl("");
+        } catch (shareError) {
+            setShareError(shareError instanceof Error ? shareError.message : "Unable to revoke this share link.");
+        } finally {
+            setShareBusy(false);
+        }
+    };
+
+    const copyShareUrl = async () => {
+        try {
+            await navigator.clipboard.writeText(shareUrl);
+        } catch {
+            setShareError("Could not copy automatically. Select and copy the share URL.");
+        }
+    };
 
     if (error) return <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>;
     if (!report) return <p className="text-sm text-zinc-500">Loading report…</p>;
@@ -51,6 +102,48 @@ export default function ReportDetailsPage() {
                 <p className="text-xs uppercase tracking-widest text-primary">{report.simulation.project.name} · {report.simulation.persona.name}</p>
                 <h1 className="mt-2 text-4xl font-bold text-white">Simulation report</h1>
                 <p className="mt-2 text-sm text-zinc-400">{report.simulation.task}</p>
+                <section className="mt-5 space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-4" aria-label="Report sharing">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0">
+                            <h2 className="font-medium text-white">Share this report</h2>
+                            <p className="text-xs text-zinc-400">Anyone with the private link can view it until it expires. Copy it now; the link cannot be recovered later, but can be revoked.</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label htmlFor="share-expiry" className="text-xs text-zinc-400">Expires in</label>
+                            <select
+                                id="share-expiry"
+                                value={shareExpiry}
+                                onChange={event => {
+                                    if (event.target.value === "1") setShareExpiry(1);
+                                    if (event.target.value === "7") setShareExpiry(7);
+                                    if (event.target.value === "30") setShareExpiry(30);
+                                }}
+                                disabled={shareBusy}
+                                className="rounded-md border border-white/10 bg-black/20 px-2 py-2 text-sm text-zinc-200"
+                            >
+                                <option value={1}>1 day</option>
+                                <option value={7}>7 days</option>
+                                <option value={30}>30 days</option>
+                            </select>
+                            <Button variant="outline" onClick={() => void createShare()} disabled={shareBusy}>
+                                {shareBusy ? "Working…" : "Create link"}
+                            </Button>
+                        </div>
+                    </div>
+                    {shareError && <p role="alert" className="text-sm text-destructive">{shareError}</p>}
+                    {shareUrl && (
+                        <div className="flex flex-wrap gap-2">
+                            <input aria-label="Report share URL" readOnly value={shareUrl} className="min-w-0 flex-1 rounded-md border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-300" onFocus={event => event.currentTarget.select()} />
+                            <Button variant="outline" onClick={() => void copyShareUrl()}>Copy link</Button>
+                        </div>
+                    )}
+                    {shares.map(share => (
+                        <div key={share.id} className="flex items-center justify-between gap-3 text-xs text-zinc-400">
+                            <span>Active link expires {new Date(share.expiresAt).toLocaleString()}</span>
+                            <Button variant="ghost" size="sm" onClick={() => void revokeShare(share.id)} disabled={shareBusy}>Revoke</Button>
+                        </div>
+                    ))}
+                </section>
             </header>
             <section className="space-y-3 rounded-2xl border border-white/10 bg-white/[0.02] p-6">
                 <h2 className="text-lg font-semibold text-white">Outcome</h2>

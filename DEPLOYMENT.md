@@ -106,3 +106,29 @@ same-host public links and open accessible tabs and disclosure panels. The
 worker blocks form submissions, non-GET requests, downloads, popups,
 cross-host requests, and unsafe navigation; it does not sign in, make
 purchases, or alter target-product data.
+
+## Performance and availability verification
+
+The PRD's 100-user concurrency, sub-3-second step interval, sub-30-second
+simulation completion, and 99% uptime goals are targets, not claims of measured
+production performance. For a staging load run, use
+[`load-tests/staging-simulations.js`](./load-tests/staging-simulations.js) with
+k6 and a dedicated staging project/persona plus an authorized staging account.
+The script requires an explicit confirmation flag and rejects hosts not clearly
+marked staging, preview, or localhost. It submits 100 real simulations and may
+incur model/provider cost; check quotas and billing, raise the staging API rate
+limit for the run, and do not point it at production.
+
+Set `STAGING_API_URL` (including `/api`), `STAGING_BEARER_TOKEN`,
+`STAGING_PROJECT_ID`, `STAGING_PERSONA_ID`, and
+`CONFIRM_STAGING_LOAD_TEST=YES` in your local shell, then run
+`k6 run load-tests/staging-simulations.js`. Use a paid-plan test account with
+enough remaining simulation quota; never store the bearer token in the script
+or repository.
+
+Configure an external uptime monitor (for example
+[Better Stack](https://betterstack.com/uptime)) against API `/health` and the
+web's public landing page. Use `/health/ready` as an alert/launch gate, not as
+the only uptime signal: optional integrations can make readiness degraded even
+while the process is serving requests. Review at least 30 days of monitor
+history before making a 99% uptime claim.

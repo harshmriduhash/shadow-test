@@ -5,14 +5,16 @@ import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
 import { requireInternalAuth, requireSession } from './security';
-import { dashboardSearchSchema, documentSearchSchema, documentStatusSchema, documentUploadSchema, paginationSchema, personaCreateSchema, personaUpdateSchema, projectCreateSchema, projectUpdateSchema, simulationReportSchema, simulationStartSchema, simulationStatusSchema, simulationStepSchema } from './schemas';
+import { dashboardSearchSchema, documentSearchSchema, documentStatusSchema, documentUploadSchema, paginationSchema, personaCreateSchema, personaUpdateSchema, projectCreateSchema, projectUpdateSchema, reportShareCreateSchema, simulationReportSchema, simulationStartSchema, simulationStatusSchema, simulationStepSchema } from './schemas';
 import { getPlanUsage } from './plans';
 import { cursorArgs, cursorPage } from './pagination';
+import { createReportShareToken, hashReportShareToken, isReportShareToken, reportShareExpiry } from './report-sharing';
 
 const prisma = new PrismaClient();
 const router = Router();
 const AI_ENGINE_URL = process.env.AI_ENGINE_URL || 'http://localhost:8000';
 const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+const MAX_ACTIVE_REPORT_SHARES = 10;
 let s3Client: S3Client | undefined;
 
 function getS3Config() {
@@ -254,6 +256,37 @@ router.post('/simulations/:id/report', requireInternalAuth, asyncHandler(async (
     });
     if (!report) return invalid(res, 'Simulation events must refer to persisted steps', []);
     res.status(201).json(report);
+}));
+
+router.post('/public/reports', asyncHandler(async (req, res) => {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    res.set('Cache-Control', 'no-store');
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    if (!isReportShareToken(token)) return res.status(404).json({ error: 'Shared report not found or expired' });
+
+    const share = await prisma.reportShare.findFirst({
+        where: {
+            tokenHash: hashReportShareToken(token),
+            revokedAt: null,
+            expiresAt: { gt: new Date() }
+        },
+        select: {
+            report: {
+                include: {
+                    simulation: {
+                        include: {
+                            project: { select: { name: true } },
+                            persona: { select: { name: true } },
+                            steps: { orderBy: { stepNumber: 'asc' } },
+                            events: { orderBy: [{ stepNumber: 'asc' }, { createdAt: 'asc' }] }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    if (!share) return res.status(404).json({ error: 'Shared report not found or expired' });
+    res.json(share.report);
 }));
 
 router.use(requireSession);
@@ -773,6 +806,78 @@ router.get('/reports/:id', asyncHandler(async (req, res) => {
     });
     if (!report) return res.status(404).json({ error: 'Report not found' });
     res.json(report);
+}));
+
+router.get('/reports/:id/shares', asyncHandler(async (req, res) => {
+    await ensureUser(req);
+    const report = await prisma.report.findFirst({
+        where: { id: routeParam(req, 'id'), simulation: { project: projectScopeWhere(req) } },
+        select: { id: true, simulation: { select: { project: { select: { userId: true, organizationId: true } } } } }
+    });
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+    if (!canManageProject(req, report.simulation.project)) {
+        return res.status(403).json({ error: 'Only project owners and organization admins can manage report sharing.' });
+    }
+
+    const shares = await prisma.reportShare.findMany({
+        where: { reportId: report.id, revokedAt: null, expiresAt: { gt: new Date() } },
+        select: { id: true, createdAt: true, expiresAt: true },
+        orderBy: { createdAt: 'desc' }
+    });
+    res.json(shares);
+}));
+
+router.post('/reports/:id/shares', asyncHandler(async (req, res) => {
+    const userId = await ensureUser(req);
+    const parsed = reportShareCreateSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return invalid(res, 'Share expiration must be 1, 7, or 30 days', parsed.error.issues);
+
+    const report = await prisma.report.findFirst({
+        where: { id: routeParam(req, 'id'), simulation: { project: projectScopeWhere(req) } },
+        select: { id: true, simulation: { select: { project: { select: { userId: true, organizationId: true } } } } }
+    });
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+    if (!canManageProject(req, report.simulation.project)) {
+        return res.status(403).json({ error: 'Only project owners and organization admins can share reports.' });
+    }
+
+    const now = new Date();
+    const activeShares = await prisma.reportShare.count({
+        where: { reportId: report.id, revokedAt: null, expiresAt: { gt: now } }
+    });
+    if (activeShares >= MAX_ACTIVE_REPORT_SHARES) {
+        return res.status(409).json({ error: 'This report already has the maximum number of active share links.' });
+    }
+
+    const { token, tokenHash } = createReportShareToken();
+    const expiresAt = reportShareExpiry(parsed.data.expiresInDays, now);
+    await prisma.reportShare.create({
+        data: { reportId: report.id, createdByUserId: userId, tokenHash, expiresAt }
+    });
+    const appUrl = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+    res.status(201).json({
+        url: `${appUrl}/shared/reports#${token}`,
+        expiresAt
+    });
+}));
+
+router.delete('/reports/:id/shares/:shareId', asyncHandler(async (req, res) => {
+    await ensureUser(req);
+    const report = await prisma.report.findFirst({
+        where: { id: routeParam(req, 'id'), simulation: { project: projectScopeWhere(req) } },
+        select: { id: true, simulation: { select: { project: { select: { userId: true, organizationId: true } } } } }
+    });
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+    if (!canManageProject(req, report.simulation.project)) {
+        return res.status(403).json({ error: 'Only project owners and organization admins can revoke report shares.' });
+    }
+
+    const revoked = await prisma.reportShare.updateMany({
+        where: { id: routeParam(req, 'shareId'), reportId: report.id, revokedAt: null },
+        data: { revokedAt: new Date() }
+    });
+    if (!revoked.count) return res.status(404).json({ error: 'Active report share not found' });
+    res.status(204).end();
 }));
 
 router.get('/simulations/:id/steps', asyncHandler(async (req, res) => {

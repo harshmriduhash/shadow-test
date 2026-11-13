@@ -18,6 +18,9 @@ passed live checks.
 - Required deployment credentials and integrations have not been verified.
   Automated tests do not substitute for a staging deployment, applied
   migrations, or real end-to-end checks.
+- Report sharing now has expiring, revocable bearer links in code; apply the
+  new migration and verify link creation, access, expiry, and revocation in
+  staging before relying on it for beta.
 
 **Conclusion:** the codebase is a tested beta candidate, not a working deployed
 beta product yet. Keep the staging and production launch gates below open until
@@ -69,6 +72,12 @@ has been confirmed.
 The product's current interaction boundary is intentional: simulations cover
 public HTTPS pages and safe, non-mutating interactions. They do not sign in,
 submit forms, make purchases, or alter a target site's data.
+
+To extend this safely, first provide a staging/sandbox URL on a domain you
+control and confirm that test-account login and reversible test-data
+submissions are authorized there. Browser actions will remain disabled for
+arbitrary public or production domains; purchase, payment, deletion, and other
+irreversible actions remain out of scope.
 
 ## Before starting: prepare configuration safely
 
@@ -184,16 +193,28 @@ Use a staging account and non-sensitive test data:
    sign-in, purchases, downloads, popups, cross-host requests, and unsafe
    navigation.
 4. Test document upload/search, organization permissions, pagination,
-   dashboard search, report export, and failed-job retry.
+   dashboard search, report export, report-link creation/opening/expiry/
+   revocation, and failed-job retry.
 5. Exercise dependency failures (AI, Redis, database, worker, S3, Qdrant,
    Clerk) and confirm errors are surfaced without false success or corrupted
    records.
 6. Review API/worker logs, rate limits, data retention/deletion, and expected
    cloud/model costs.
+7. For performance validation, run the staging-only k6 script in
+   `load-tests/staging-simulations.js` with a dedicated staging account and
+   target. It creates 100 simulations and incurs AI/browser usage; explicitly
+   confirm staging and billing before setting
+   `CONFIRM_STAGING_LOAD_TEST=YES`. Do not run it against production.
+8. Configure external uptime checks for the web app and API. Monitor for at
+   least 30 days before claiming the 99% uptime goal.
 
 **Pass when:** core flows pass end to end, safety restrictions hold, and
 failure behavior is understandable and recoverable. Record and fix any
 launch-blocking defects before proceeding.
+
+**Important:** local tests and the load-test script do not demonstrate the
+performance targets. The 100-simulation run must actually pass its thresholds
+on staging; uptime requires real monitoring history.
 
 ## Phase 5 — Production rollout and early-user gate · approximately 5%
 
@@ -222,6 +243,10 @@ simulation safety restrictions fail, or jobs/reports do not persist.
 - [ ] Clerk, Anthropic, S3, and Qdrant have passed live staging checks.
 - [ ] Core user journeys, permissions, safety restrictions, and failure paths
       pass end-to-end testing.
+- [ ] Report-sharing migration is applied; link expiry and revocation are
+      verified in staging.
+- [ ] 100-VU staging simulation run passes its latency and failure thresholds.
+- [ ] External uptime history supports the stated 99% reliability goal.
 - [ ] Production secrets and URLs are configured only in provider dashboards.
 - [ ] Production migration, backup, rollback, monitoring, and early-user plan
       are reviewed.

@@ -10,7 +10,8 @@ const {
     simulationReportSchema,
     simulationStartSchema,
     simulationStatusSchema,
-    simulationStepSchema
+    simulationStepSchema,
+    reportShareCreateSchema
 } = require('../dist/schemas.js');
 const { getPlanUsage } = require('../dist/plans.js');
 
@@ -133,6 +134,13 @@ test('dashboard search requires two through 120 characters', () => {
     assert.equal(dashboardSearchSchema.safeParse({ query: 'billing' }).success, true);
     assert.equal(dashboardSearchSchema.safeParse({ query: 'x' }).success, false);
     assert.equal(dashboardSearchSchema.safeParse({ query: 'x'.repeat(121) }).success, false);
+});
+
+test('report share links are limited to 1, 7, or 30 day expiration periods', () => {
+    assert.deepEqual(reportShareCreateSchema.parse({}), { expiresInDays: 7 });
+    assert.equal(reportShareCreateSchema.safeParse({ expiresInDays: 1 }).success, true);
+    assert.equal(reportShareCreateSchema.safeParse({ expiresInDays: 30 }).success, true);
+    assert.equal(reportShareCreateSchema.safeParse({ expiresInDays: 2 }).success, false);
 });
 
 test('new accounts use free plan quotas and UTC month usage', async () => {

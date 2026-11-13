@@ -107,6 +107,12 @@ export interface Report {
     };
 }
 
+export interface ReportShare {
+    id: string;
+    createdAt: string;
+    expiresAt: string;
+}
+
 export interface ProjectDocument {
     id: string;
     projectId: string;
@@ -219,6 +225,22 @@ export const api = {
     reports: {
         list: (options?: RequestInit, cursor?: string) => fetcher<CursorPage<Report>>(`/reports${pageQuery(cursor)}`, options),
         get: (id: string, options?: RequestInit) => fetcher<Report>(`/reports/${encodeURIComponent(id)}`, options),
+        getShared: (token: string) => fetcher<Report>('/public/reports', {
+            method: 'POST',
+            body: JSON.stringify({ token })
+        }),
+        listShares: (id: string, options?: RequestInit) => fetcher<ReportShare[]>(`/reports/${encodeURIComponent(id)}/shares`, options),
+        createShare: (id: string, expiresInDays: 1 | 7 | 30, options?: RequestInit) =>
+            fetcher<{ url: string; expiresAt: string }>(`/reports/${encodeURIComponent(id)}/shares`, {
+                ...options,
+                method: 'POST',
+                body: JSON.stringify({ expiresInDays })
+            }),
+        revokeShare: (id: string, shareId: string, options?: RequestInit) =>
+            fetcher<void>(`/reports/${encodeURIComponent(id)}/shares/${encodeURIComponent(shareId)}`, {
+                ...options,
+                method: 'DELETE'
+            }),
     },
     billing: {
         subscription: (options?: RequestInit) => fetcher<PlanOverview>('/billing/subscription', options),

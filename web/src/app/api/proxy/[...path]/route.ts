@@ -46,8 +46,10 @@ async function proxyRequest(request: NextRequest, path: string[]) {
             signal: AbortSignal.timeout(20_000),
         });
         const responseHeaders = new Headers();
-        const contentType = upstream.headers.get('content-type');
-        if (contentType) responseHeaders.set('content-type', contentType);
+        for (const name of ['content-type', 'cache-control', 'x-robots-tag']) {
+            const value = upstream.headers.get(name);
+            if (value) responseHeaders.set(name, value);
+        }
         return new NextResponse(upstream.body, {
             status: upstream.status,
             headers: responseHeaders,
