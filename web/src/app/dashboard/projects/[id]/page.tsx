@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Play, UserCircle2, CheckCircle2, Clock, XCircle, Activity, Loader2, Zap, Terminal } from "lucide-react";
-import { api, authOptions, type Persona, type Project, type Simulation } from "@/lib/api";
+import { api, authOptions, connectSimulationProgress, type Persona, type Project, type Simulation } from "@/lib/api";
 import { AIThinking } from "@/components/ai-thinking";
 import { motion, AnimatePresence } from "framer-motion";
 import { ProjectDocuments } from "./documents";
@@ -27,6 +27,8 @@ export default function ProjectDetailsPage() {
     const [loadingMore, setLoadingMore] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [cancellingId, setCancellingId] = useState<string | null>(null);
+    const [cancelRequestedIds, setCancelRequestedIds] = useState<Set<string>>(() => new Set());
     const loadedProjectId = useRef<string | null>(null);
     const hasLoadedMore = useRef(false);
 
@@ -44,6 +46,7 @@ export default function ProjectDetailsPage() {
                 loadedProjectId.current = id;
                 hasLoadedMore.current = false;
                 setSimulations([]);
+                setCancelRequestedIds(new Set());
                 setNextCursor(null);
                 setTotalSimulations(0);
             }
@@ -51,6 +54,15 @@ export default function ProjectDetailsPage() {
                 api.projects.get(id, options),
                 api.projects.getSimulations(id, options)
             ]);
+            setCancelRequestedIds(current => {
+                const next = new Set(current);
+                simData.items.forEach(simulation => {
+                    if (simulation.status !== "PENDING" && simulation.status !== "RUNNING") {
+                        next.delete(simulation.id);
+                    }
+                });
+                return next;
+            });
             setProject(projData);
             setSimulations(current => {
                 if (isNewProject) return simData.items;
@@ -102,14 +114,42 @@ export default function ProjectDetailsPage() {
         fetchData();
     }, [fetchData]);
 
-    // Poll for running simulations
+    const activeSimulationIds = simulations
+        .filter(simulation => simulation.status === "RUNNING" || simulation.status === "PENDING")
+        .map(simulation => simulation.id)
+        .join(",");
+
+    useEffect(() => {
+        let disposed = false;
+        const disconnect = new Set<() => void>();
+        const attach = async (simulationId: string) => {
+            try {
+                const close = await connectSimulationProgress(
+                    simulationId,
+                    authOptions(await getToken()),
+                    () => { void fetchData(); }
+                );
+                if (disposed) close();
+                else disconnect.add(close);
+            } catch (progressError) {
+                if (!disposed) console.error("Simulation live updates are unavailable; polling remains active.", progressError);
+            }
+        };
+        void Promise.all(activeSimulationIds.split(",").filter(Boolean).map(attach));
+        return () => {
+            disposed = true;
+            disconnect.forEach(close => close());
+        };
+    }, [activeSimulationIds, fetchData, getToken]);
+
+    // Poll as a fallback if the progress socket disconnects.
     useEffect(() => {
         const hasRunningSim = simulations.some(s => s.status === "RUNNING" || s.status === "PENDING");
         if (!hasRunningSim) return;
 
         const interval = setInterval(() => {
             fetchData();
-        }, 3000);
+        }, 10000);
 
         return () => clearInterval(interval);
     }, [simulations, fetchData]);
@@ -142,6 +182,20 @@ export default function ProjectDetailsPage() {
             setError(error instanceof Error ? error.message : "Unable to retry the simulation.");
         } finally {
             setIsLaunching(false);
+        }
+    };
+
+    const cancelSimulation = async (simulationId: string) => {
+        setCancellingId(simulationId);
+        setError("");
+        try {
+            await api.simulations.cancel(simulationId, authOptions(await getToken()));
+            setCancelRequestedIds(current => new Set(current).add(simulationId));
+            await fetchData();
+        } catch (cancelError) {
+            setError(cancelError instanceof Error ? cancelError.message : "Unable to cancel the simulation.");
+        } finally {
+            setCancellingId(null);
         }
     };
 
@@ -243,7 +297,23 @@ export default function ProjectDetailsPage() {
                                                 <div className={`h-2 w-2 rounded-full ${activeSimulation.status === 'RUNNING' ? 'bg-primary animate-pulse' : 'bg-zinc-700'}`} />
                                                 <CardTitle className="text-xl text-white font-medium">Neural Observations</CardTitle>
                                             </div>
-                                            <div className="font-mono text-[10px] text-zinc-500 uppercase tracking-widest bg-white/[0.03] px-2 py-1 rounded">Cycle Auto-Stream</div>
+                                            <div className="flex items-center gap-2">
+                                                {(activeSimulation.status === 'PENDING' || activeSimulation.status === 'RUNNING') && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={cancellingId === activeSimulation.id || cancelRequestedIds.has(activeSimulation.id)}
+                                                        onClick={() => void cancelSimulation(activeSimulation.id)}
+                                                    >
+                                                        {cancellingId === activeSimulation.id
+                                                            ? "Cancelling…"
+                                                            : cancelRequestedIds.has(activeSimulation.id)
+                                                                ? "Requested"
+                                                                : "Cancel run"}
+                                                    </Button>
+                                                )}
+                                                <div className="font-mono text-[10px] text-zinc-500 uppercase tracking-widest bg-white/[0.03] px-2 py-1 rounded">Cycle Auto-Stream</div>
+                                            </div>
                                         </div>
                                         <p className="text-sm text-zinc-400 font-light italic mt-2 border-l-2 border-primary/20 pl-4 py-1 bg-white/[0.01]">Objective: {activeSimulation.task}</p>
                                     </CardHeader>
