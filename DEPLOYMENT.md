@@ -26,6 +26,11 @@ deployment. For an existing database that was previously initialized with
 database schema matches it and baseline the migration with Prisma's
 `migrate resolve` command.
 
+The blueprint pins the API and AI service ports to `4000` and `8000`. These
+must agree with the private service URLs configured for API-to-AI calls and
+AI/worker-to-API callbacks. If you change either port, update both the service
+port and every corresponding internal URL together.
+
 ## 2. Deploy the web app to Vercel
 
 1. Import the repository and set `web` as the Vercel root directory.

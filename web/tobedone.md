@@ -23,6 +23,39 @@ passed live checks.
 beta product yet. Keep the staging and production launch gates below open until
 their pass conditions are verified against the actual services.
 
+## What you need to do next
+
+These are the account-side actions needed to turn the prepared code into a
+usable beta. Do them in staging first; do not send keys or database URLs in
+chat.
+
+1. Sign in to Render and create a staging Blueprint deployment from this
+   repository's `render.yaml`. It creates the API, AI service, worker, and
+   Redis. Check Render's current pricing and confirm billing first; the
+   blueprint selects paid starter services. The API listens on port `4000`;
+   the AI service listens on `8000`.
+2. Create a separate staging PostgreSQL database. Before applying migrations,
+   confirm its pooled and direct URLs and inspect whether it is empty or has a
+   schema from `prisma db push`.
+3. Create/configure staging Clerk, Anthropic, private S3, and Qdrant accounts
+   using the provider links below. Generate a long random `INTERNAL_API_KEY`;
+   configure the same value for API, AI service, and worker.
+4. Enter credentials only in Render's environment settings. Set the API's
+   database URLs, Clerk issuer, web origin, app URL, and S3 settings; set the
+   Anthropic, S3, Qdrant, and shared internal credentials on the AI service and
+   worker. The blueprint supplies Redis and internal service URLs.
+5. Deploy the Vercel web app with the staging Clerk keys and
+   `API_SERVER_URL=<actual-render-api-origin>/api`. Set the exact Vercel origin
+   in the API's `ALLOWED_ORIGINS` and `APP_URL`.
+6. After Render reports all services deployed, check API `/health`, AI
+   `/health`, then API `/health/ready`. Share only the public staging web/API
+   URLs and the readiness response's boolean checks if you want help
+   diagnosing setup—never share credentials.
+
+Until these steps are done and the staging acceptance checks pass, the product
+is not available for beta users. If a provider blocks deployment or displays
+an error, capture the non-secret error text and stop before production.
+
 ## Is the engine ready?
 
 **The AI engine is implemented and locally testable, but it is not launch-ready
@@ -90,6 +123,9 @@ and for the existing API readiness gate.
      API URL, S3 configuration, and Qdrant endpoint/key.
    - **Vercel web:** Clerk publishable/secret keys, `API_SERVER_URL` ending in
      `/api`, and the optional contact email.
+   The blueprint pins the API to port `4000` and the AI service to `8000` to
+   match the internal callback URLs. Keep those values aligned if changing
+   ports.
 3. Enable Clerk Organizations if team workspaces are included in early access;
    allow the exact staging web origin in Clerk and the API.
 4. Deploy the backend first, then configure and deploy the Vercel web app.
