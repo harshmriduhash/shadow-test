@@ -42,7 +42,7 @@ export const simulationStartSchema = z.object({
 });
 
 export const simulationStatusSchema = z.object({
-    status: z.enum(['RUNNING', 'COMPLETED', 'FAILED'])
+    status: z.enum(['RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED'])
 });
 
 export const simulationReportSchema = z.object({

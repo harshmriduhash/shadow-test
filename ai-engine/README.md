@@ -1,10 +1,11 @@
 # ShadowTest AI service and worker
 
 The FastAPI service validates product sources and accepts simulation jobs. Jobs
-are placed on Redis and consumed by `worker.py`; the worker writes trace steps,
-reports, and status changes through authenticated internal API routes. Redis
-jobs left in the processing list after a worker interruption are returned to
-the pending queue on worker startup.
+are placed on BullMQ on Redis and consumed by `worker.py`; the worker writes
+trace steps, reports, and status changes through authenticated internal API
+routes. BullMQ retries transient failures with backoff and recovers stalled jobs
+after worker interruptions. Worker concurrency is bounded by
+`SIMULATION_WORKER_CONCURRENCY` (default: 2).
 
 Walkthroughs render public HTTPS pages in a fresh, isolated Chromium context.
 They can follow safe same-host links and open accessible tabs and disclosure
@@ -27,4 +28,5 @@ session. GitHub README access is also supported.
    ```
 
 The API can run without Redis only in development, where FastAPI background
-tasks are used instead of the durable queue.
+tasks are used instead of the durable queue. Queue behavior, cancellation, and
+worker readiness require a reachable Redis service.

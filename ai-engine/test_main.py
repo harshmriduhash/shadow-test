@@ -1,5 +1,4 @@
 import asyncio
-import json
 import socket
 from types import SimpleNamespace
 import unittest
@@ -216,6 +215,7 @@ class SimulationRequestTests(unittest.TestCase):
             patch.object(main.Scraper, "get_page_context", new=AsyncMock(side_effect=[page, billing_page])) as preflight,
             patch.object(main, "SafeBrowserSession", return_value=browser),
             patch.object(main, "send_internal_request", new=record_request),
+            patch.object(main, "simulation_is_cancelled", new=AsyncMock(return_value=False)),
             patch.object(main, "update_simulation_status", new=AsyncMock()) as update_status,
         ):
             asyncio.run(main.run_simulation_loop(request))
@@ -236,6 +236,34 @@ class SimulationRequestTests(unittest.TestCase):
         self.assertEqual(update_status.await_args_list, [
             unittest.mock.call("simulation", "RUNNING"),
             unittest.mock.call("simulation", "COMPLETED"),
+        ])
+
+    def test_simulation_cancellation_during_model_response_does_not_record_a_step(self):
+        request = main.SimulationRequest(
+            project_id="project",
+            persona_id="persona",
+            task="Find billing",
+            simulation_id="simulation",
+        )
+        with (
+            patch.object(main, "ANTHROPIC_API_KEY", "test-key"),
+            patch.object(main.anthropic, "AsyncAnthropic"),
+            patch.object(
+                main,
+                "simulation_is_cancelled",
+                new=AsyncMock(side_effect=[False, False, True]),
+            ),
+            patch.object(main, "ask_persona_for_step", new=AsyncMock(return_value={})) as ask,
+            patch.object(main, "send_internal_request", new=AsyncMock()) as send,
+            patch.object(main, "update_simulation_status", new=AsyncMock()) as update_status,
+        ):
+            asyncio.run(main.run_simulation_loop(request))
+
+        ask.assert_awaited_once()
+        send.assert_not_awaited()
+        self.assertEqual(update_status.await_args_list, [
+            unittest.mock.call("simulation", "RUNNING"),
+            unittest.mock.call("simulation", "CANCELLED"),
         ])
 
 
@@ -314,16 +342,13 @@ class APIEndpointTests(unittest.TestCase):
 
 
 class SimulationQueueTests(unittest.TestCase):
-    def test_simulation_is_enqueued_as_a_persistent_json_payload(self):
-        class FakeRedis:
+    def test_simulation_is_enqueued_with_stable_identity_and_retries(self):
+        class FakeQueue:
             def __init__(self):
-                self.payloads = []
+                self.jobs = []
 
-            async def ping(self):
-                return True
-
-            async def rpush(self, key, payload):
-                self.payloads.append((key, payload))
+            async def add(self, name, data, options):
+                self.jobs.append((name, data, options))
 
         request = main.SimulationRequest(
             project_id="project",
@@ -331,27 +356,66 @@ class SimulationQueueTests(unittest.TestCase):
             task="Find billing",
             simulation_id="simulation",
         )
-        fake_redis = FakeRedis()
+        fake_queue = FakeQueue()
         with (
             patch.object(main, "REDIS_URL", "redis://queue"),
-            patch.object(main, "redis_client", fake_redis),
+            patch.object(main, "bull_queue", fake_queue),
         ):
             enqueued = asyncio.run(main.enqueue_simulation(request))
 
         self.assertTrue(enqueued)
-        self.assertEqual(fake_redis.payloads[0][0], main.QUEUE_KEY)
-        self.assertEqual(
-            main.SimulationRequest.model_validate_json(fake_redis.payloads[0][1]).simulation_id,
-            "simulation",
-        )
+        name, data, options = fake_queue.jobs[0]
+        self.assertEqual(name, "simulation")
+        self.assertEqual(data["request"]["simulation_id"], "simulation")
+        self.assertEqual(options["jobId"], "simulation-simulation")
+        self.assertEqual(options["attempts"], 3)
+        self.assertEqual(options["backoff"]["type"], "exponential")
 
-    def test_document_index_jobs_are_queued_with_a_job_type(self):
-        class FakeRedis:
-            async def ping(self):
-                return True
+    def test_worker_processes_simulation_jobs_with_retry_safe_failure_handling(self):
+        class FakeJob:
+            id = "simulation"
+            name = "simulation"
+            data = {
+                "request": {
+                    "project_id": "project",
+                    "persona_id": "persona",
+                    "task": "Find billing",
+                    "simulation_id": "simulation",
+                }
+            }
 
-            async def rpush(self, key, payload):
-                self.payload = json.loads(payload)
+        with patch.object(main, "run_simulation_loop", new=AsyncMock()) as run_simulation:
+            result = asyncio.run(worker.process_queue_job(FakeJob()))
+
+        self.assertEqual(result, {"status": "completed", "simulation_id": "simulation"})
+        run_simulation.assert_awaited_once()
+        self.assertFalse(run_simulation.await_args.kwargs["mark_failure"])
+
+    def test_final_bullmq_attempt_marks_simulation_failed_but_retries_do_not(self):
+        class FakeJob:
+            id = "simulation"
+            name = "simulation"
+            data = {"request": {"simulation_id": "simulation"}}
+            attempts = 3
+
+            def __init__(self, attempts_made):
+                self.attemptsMade = attempts_made
+
+        async def verify():
+            with patch.object(worker, "update_simulation_status", new=AsyncMock()) as update:
+                worker.handle_failed_job(FakeJob(1), RuntimeError("retry"))
+                await asyncio.sleep(0)
+                update.assert_not_awaited()
+                worker.handle_failed_job(FakeJob(3), RuntimeError("final"))
+                await asyncio.gather(*tuple(worker.failure_status_tasks))
+                update.assert_awaited_once_with("simulation", "FAILED")
+
+        asyncio.run(verify())
+
+    def test_document_index_jobs_use_the_same_durable_queue(self):
+        class FakeQueue:
+            async def add(self, name, data, options):
+                self.job = (name, data, options)
 
         request = main.DocumentIndexRequest(
             document_id="document",
@@ -360,16 +424,17 @@ class SimulationQueueTests(unittest.TestCase):
             content_type="text/plain",
             file_name="guide.txt",
         )
-        fake_redis = FakeRedis()
+        fake_queue = FakeQueue()
         with (
             patch.object(main, "REDIS_URL", "redis://queue"),
-            patch.object(main, "redis_client", fake_redis),
+            patch.object(main, "bull_queue", fake_queue),
         ):
             enqueued = asyncio.run(main.enqueue_document_index(request))
 
         self.assertTrue(enqueued)
-        self.assertEqual(fake_redis.payload["job_type"], "document_index")
-        self.assertEqual(fake_redis.payload["document"]["document_id"], "document")
+        self.assertEqual(fake_queue.job[0], "document_index")
+        self.assertEqual(fake_queue.job[1]["document"]["document_id"], "document")
+        self.assertEqual(fake_queue.job[2]["attempts"], 3)
 
     def test_document_index_job_updates_ready_after_successful_index(self):
         details = ("document", "project", "private/key", "text/plain", "guide.txt")
@@ -383,29 +448,11 @@ class SimulationQueueTests(unittest.TestCase):
         index.assert_awaited_once_with(main.index_document, *details)
         update.assert_awaited_once_with("document", "READY")
 
-    def test_worker_recovers_jobs_left_in_processing(self):
-        class FakeRedis:
-            def __init__(self):
-                self.processing = ["newer", "older"]
-                self.pending = []
-
-            async def rpoplpush(self, source, destination):
-                if source != worker.PROCESSING_KEY or destination != worker.QUEUE_KEY:
-                    self.fail("Worker used an unexpected recovery list")
-                if not self.processing:
-                    return None
-                payload = self.processing.pop()
-                self.pending.insert(0, payload)
-                return payload
-
-            def fail(self, message):
-                raise AssertionError(message)
-
-        fake_redis = FakeRedis()
-        recovered = asyncio.run(worker.requeue_abandoned_jobs(fake_redis))
-        self.assertEqual(recovered, 2)
-        self.assertEqual(fake_redis.pending, ["newer", "older"])
-        self.assertEqual(fake_redis.processing, [])
+    def test_worker_uses_bullmq_stall_recovery_and_bounded_concurrency(self):
+        self.assertEqual(main.QUEUE_NAME, "shadowtest-jobs")
+        self.assertEqual(worker.WORKER_CONCURRENCY, 2)
+        self.assertEqual(worker.WORKER_MAX_STALLED_COUNT, 2)
+        self.assertGreater(worker.WORKER_LOCK_DURATION_MS, worker.WORKER_STALLED_INTERVAL_MS)
 
     def test_worker_sets_a_ttl_on_heartbeat(self):
         class FakeRedis:

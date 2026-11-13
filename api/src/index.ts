@@ -1,10 +1,14 @@
 import express from 'express';
+import { createServer } from 'node:http';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { rateLimit } from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
-import { createClient } from 'redis';
 import { PrismaClient } from '@prisma/client';
+import { createRedisClient } from './redis-client';
+import { isAllowedOrigin, parseAllowedOrigins, securityHeaders } from './http-security';
+import { closeSimulationQueue, getSimulationQueue } from './simulation-queue';
+import { closeSimulationProgressClient } from './simulation-progress';
+import { attachSimulationWebSocket } from './simulation-websocket';
+import { closeRateLimitClient, ipRateLimit } from './tenant-rate-limit';
 import { billingRouter, stripeWebhookHandler } from './billing';
 import { createApiResponseCache } from './cache';
 import { requestContext, versionedApiEnvelope } from './request-context';
@@ -15,49 +19,45 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 const readinessPrisma = new PrismaClient();
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
-    .split(',')
-    .map(origin => origin.trim())
-    .filter(Boolean);
-const redisClient = process.env.REDIS_URL ? createClient({ url: process.env.REDIS_URL }) : undefined;
+const server = createServer(app);
+const allowedOrigins = parseAllowedOrigins(
+    process.env.CORS_ALLOWED_ORIGINS || process.env.ALLOWED_ORIGINS,
+    process.env.NODE_ENV === 'production'
+);
+const redisClient = process.env.REDIS_URL ? createRedisClient(process.env.REDIS_URL) : undefined;
+const progressWebSockets = attachSimulationWebSocket(server, allowedOrigins);
 
 redisClient?.on('error', error => console.error('Redis connection error:', error));
 
 app.set('trust proxy', 1);
 app.use(requestContext);
 app.use('/api/v1', versionedApiEnvelope);
+app.use(securityHeaders);
+app.use((req, res, next) => {
+    if (!isAllowedOrigin(req, allowedOrigins)) {
+        return res.status(403).json({ error: 'Origin is not allowed' });
+    }
+    next();
+});
 app.use(cors({
     origin(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-        return callback(new Error('Origin is not allowed by CORS'));
+        return callback(null, !origin || allowedOrigins.includes(origin));
     },
     credentials: true
 }));
-const apiRateLimit = rateLimit({
-    windowMs: 60_000,
-    limit: Number(process.env.API_RATE_LIMIT_PER_MINUTE || 120),
-    standardHeaders: 'draft-7',
-    legacyHeaders: false,
-    ...(redisClient ? {
-        store: new RedisStore({
-            sendCommand: (...args: string[]) => redisClient.sendCommand(args)
-        })
-    } : {})
-});
-
-app.post('/api/billing/webhook', apiRateLimit, express.raw({ type: 'application/json' }), stripeWebhookHandler);
-app.post('/api/v1/webhooks/stripe', apiRateLimit, express.raw({ type: 'application/json' }), stripeWebhookHandler);
+app.post('/api/billing/webhook', ipRateLimit, express.raw({ type: 'application/json' }), stripeWebhookHandler);
+app.post('/api/v1/webhooks/stripe', ipRateLimit, express.raw({ type: 'application/json' }), stripeWebhookHandler);
 app.use(express.json({ limit: '1mb' }));
-app.use(apiRateLimit);
+app.use(ipRateLimit);
 app.use('/api', createApiResponseCache(redisClient));
 
-app.use('/api/v1', apiRoutes);
 app.use('/api/v1/billing', billingRouter);
+app.use('/api/v1', apiRoutes);
 app.use('/api/v1', (_req, res) => {
     res.status(404).json({ error: { code: 'NOT_FOUND', message: 'API route not found' } });
 });
-app.use('/api', apiRoutes);
 app.use('/api/billing', billingRouter);
+app.use('/api', apiRoutes);
 
 app.get('/health', (_req, res) => {
     res.status(200).json({ status: 'ok', service: 'ShadowTest API' });
@@ -118,8 +118,21 @@ app.get('/health/ready', async (_req, res) => {
         }),
         check('worker', async () => {
             if (!redisClient?.isReady) throw new Error('Redis is not connected');
-            const heartbeat = await redisClient.exists('shadowtest:worker:heartbeat');
-            if (!heartbeat) throw new Error('Simulation worker heartbeat is unavailable');
+            let cursor = '0';
+            let hasWorker = false;
+            do {
+                const result = await redisClient.scan(cursor, {
+                    MATCH: 'shadowtest:worker:heartbeat:*',
+                    COUNT: 100
+                });
+                cursor = result.cursor;
+                hasWorker = result.keys.length > 0;
+            } while (cursor !== '0' && !hasWorker);
+            if (!hasWorker) {
+                hasWorker = (await redisClient.exists('shadowtest:worker:heartbeat')) > 0;
+            }
+            if (!hasWorker) throw new Error('Simulation worker heartbeat is unavailable');
+            await getSimulationQueue().getJobCounts('waiting', 'active', 'delayed', 'failed');
         }),
         check('clerk', async () => {
             const jwksUrl = process.env.CLERK_JWKS_URL
@@ -166,9 +179,29 @@ async function startServer() {
         throw new Error('REDIS_URL is required in production for shared rate limiting');
     }
     if (redisClient) await redisClient.connect();
-    app.listen(PORT, () => {
+    server.listen(PORT, () => {
         console.log(`Server running on port ${PORT}`);
     });
+    const shutdown = () => {
+        for (const client of progressWebSockets.clients) {
+            client.close(1001, 'Server shutting down');
+        }
+        progressWebSockets.close();
+        server.close(() => {
+            void Promise.all([
+                closeSimulationQueue(),
+                closeSimulationProgressClient(),
+                closeRateLimitClient(),
+                readinessPrisma.$disconnect(),
+                redisClient?.quit()
+            ]).catch(error => {
+                console.error('Failed to close API resources cleanly:', error);
+                process.exitCode = 1;
+            });
+        });
+    };
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
 }
 
 if (require.main === module) {

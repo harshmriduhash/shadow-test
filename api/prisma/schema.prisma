@@ -129,6 +129,7 @@ model Simulation {
   projectId String
   personaId String
   task      String
+  idempotencyKey String? @map("idempotency_key")
   status    String   @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
   success   Boolean?
   createdAt DateTime @default(now())
@@ -141,6 +142,7 @@ model Simulation {
 
   @@index([projectId, createdAt])
   @@index([personaId])
+  @@unique([projectId, idempotencyKey])
 }
 
 model SimulationEvent {

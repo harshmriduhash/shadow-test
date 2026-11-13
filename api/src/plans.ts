@@ -7,6 +7,8 @@ type SimulationQuotaResult = {
     plan: PlanName;
     limits: PlanLimits;
     reserved: false;
+    deduplicated: false;
+    rejection: 'monthly_limit' | 'concurrency_limit';
     simulationsUsed: number;
     periodStart: Date;
     simulation: null;
@@ -14,6 +16,8 @@ type SimulationQuotaResult = {
     plan: PlanName;
     limits: PlanLimits;
     reserved: true;
+    deduplicated: boolean;
+    rejection: null;
     simulationsUsed: number;
     periodStart: Date;
     simulation: Simulation;
@@ -24,6 +28,13 @@ const PLAN_LIMITS: Record<PlanName, PlanLimits> = {
     STARTER: { projects: 10, simulationsPerMonth: 100 },
     PRO: { projects: null, simulationsPerMonth: 1000 }
 };
+function maxActiveSimulationsPerOrganization() {
+    const limit = Number(process.env.MAX_ACTIVE_SIMULATIONS_PER_ORG ?? 2);
+    if (!Number.isInteger(limit) || limit < 1) {
+        throw new Error('MAX_ACTIVE_SIMULATIONS_PER_ORG must be a positive integer');
+    }
+    return limit;
+}
 
 function isPaidPlan(plan: string): plan is Exclude<PlanName, 'FREE'> {
     return plan === 'STARTER' || plan === 'PRO';
@@ -75,6 +86,9 @@ export async function createSimulationWithinQuota(
 ): Promise<SimulationQuotaResult> {
     const periodStart = monthStartUtc(now);
     return prisma.$transaction(async transaction => {
+        await transaction.$queryRaw<Array<{ id: string }>>`
+            SELECT "id" FROM "Organization" WHERE "id" = ${organizationId} FOR UPDATE
+        `;
         const [subscription, usageRecord] = await Promise.all([
             transaction.subscription.findUnique({ where: { organizationId } }),
             transaction.usageRecord.upsert({
@@ -85,6 +99,47 @@ export async function createSimulationWithinQuota(
         ]);
         const plan = activePlan(subscription);
         const limits = PLAN_LIMITS[plan];
+        if (typeof data.idempotencyKey === 'string') {
+            const existing = await transaction.simulation.findUnique({
+                where: {
+                    projectId_idempotencyKey: {
+                        projectId: data.projectId,
+                        idempotencyKey: data.idempotencyKey
+                    }
+                }
+            });
+            if (existing) {
+                return {
+                    plan,
+                    limits,
+                    reserved: true as const,
+                    deduplicated: true,
+                    rejection: null,
+                    simulationsUsed: usageRecord.simulationsUsed,
+                    periodStart,
+                    simulation: existing
+                };
+            }
+        }
+
+        const activeSimulations = await transaction.simulation.count({
+            where: {
+                project: { organizationId },
+                status: { in: ['PENDING', 'RUNNING'] }
+            }
+        });
+        if (activeSimulations >= maxActiveSimulationsPerOrganization()) {
+            return {
+                plan,
+                limits,
+                reserved: false as const,
+                deduplicated: false as const,
+                rejection: 'concurrency_limit' as const,
+                simulationsUsed: usageRecord.simulationsUsed,
+                periodStart,
+                simulation: null
+            };
+        }
         const reservation = await transaction.usageRecord.updateMany({
             where: {
                 id: usageRecord.id,
@@ -98,6 +153,8 @@ export async function createSimulationWithinQuota(
                 plan,
                 limits,
                 reserved: false as const,
+                deduplicated: false as const,
+                rejection: 'monthly_limit' as const,
                 simulationsUsed: usageRecord.simulationsUsed,
                 periodStart,
                 simulation: null
@@ -109,6 +166,8 @@ export async function createSimulationWithinQuota(
             plan,
             limits,
             reserved: true as const,
+            deduplicated: false,
+            rejection: null,
             simulationsUsed: usageRecord.simulationsUsed + 1,
             periodStart,
             simulation
@@ -118,16 +177,29 @@ export async function createSimulationWithinQuota(
 
 export async function releaseSimulationUsage(
     prisma: PrismaClient,
+    simulationId: string,
     organizationId: string,
-    periodStart: Date
+    periodStart: Date,
+    terminalStatus: 'FAILED' | 'CANCELLED' = 'FAILED'
 ) {
-    await prisma.usageRecord.updateMany({
-        where: {
-            organizationId,
-            periodStart,
-            simulationsUsed: { gt: 0 }
-        },
-        data: { simulationsUsed: { decrement: 1 } }
+    return prisma.$transaction(async transaction => {
+        const transitioned = await transaction.simulation.updateMany({
+            where: {
+                id: simulationId,
+                status: { in: ['PENDING', 'RUNNING'] }
+            },
+            data: { status: terminalStatus }
+        });
+        if (transitioned.count !== 1) return false;
+        await transaction.usageRecord.updateMany({
+            where: {
+                organizationId,
+                periodStart,
+                simulationsUsed: { gt: 0 }
+            },
+            data: { simulationsUsed: { decrement: 1 } }
+        });
+        return true;
     });
 }
 

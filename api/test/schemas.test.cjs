@@ -190,10 +190,13 @@ test('inactive subscriptions fall back to free quotas', async () => {
 test('simulation creation atomically reserves organization quota', async () => {
     const calls = [];
     const simulationCreates = [];
-    const makePrisma = simulationsUsed => ({
+    const makePrisma = (simulationsUsed, activeCount = 0, existingSimulation = null) => ({
         $transaction: async callback => callback({
+            $queryRaw: async () => [{ id: 'org' }],
             subscription: { findUnique: async () => null },
             simulation: {
+                count: async () => activeCount,
+                findUnique: async () => existingSimulation,
                 create: async ({ data }) => {
                     simulationCreates.push(data);
                     return { id: 'simulation' };
@@ -220,6 +223,17 @@ test('simulation creation atomically reserves organization quota', async () => {
     const blocked = await createSimulationWithinQuota(makePrisma(3), 'org', data, new Date('2026-06-15T12:00:00Z'));
     assert.equal(blocked.reserved, false);
     assert.equal(blocked.simulationsUsed, 3);
+    const concurrentBlocked = await createSimulationWithinQuota(makePrisma(1, 2), 'org', data);
+    assert.equal(concurrentBlocked.reserved, false);
+    assert.equal(concurrentBlocked.rejection, 'concurrency_limit');
+    const duplicate = await createSimulationWithinQuota(
+        makePrisma(3, 2, { id: 'existing' }),
+        'org',
+        { ...data, idempotencyKey: 'same-request' }
+    );
+    assert.equal(duplicate.reserved, true);
+    assert.equal(duplicate.deduplicated, true);
+    assert.equal(duplicate.simulation.id, 'existing');
     assert.equal(calls[0].periodStart.toISOString(), '2026-06-01T00:00:00.000Z');
     assert.deepEqual(calls[1].where.simulationsUsed, { lt: 3 });
     assert.deepEqual(calls[1].data.simulationsUsed, { increment: 1 });

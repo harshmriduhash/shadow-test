@@ -4,7 +4,8 @@ import Stripe from 'stripe';
 import { z } from 'zod';
 import { getPlanUsage, normalizePlan, type PlanName } from './plans';
 import { requireSession } from './security';
-import { ensureWorkspace, getWorkspaceId } from './tenant';
+import { canManageTenant, ensureWorkspace, getWorkspaceId } from './tenant';
+import { tenantRateLimit } from './tenant-rate-limit';
 
 const prisma = new PrismaClient();
 const billingRouter = Router();
@@ -36,6 +37,7 @@ async function ensureUser(req: Request) {
 }
 
 billingRouter.use(requireSession);
+billingRouter.use(tenantRateLimit);
 
 billingRouter.get('/subscription', asyncRoute(async (req, res) => {
     await ensureUser(req);
@@ -58,6 +60,9 @@ billingRouter.post('/checkout', asyncRoute(async (req, res) => {
 
     const user = await ensureUser(req);
     if (!req.auth) throw new Error('Authenticated user context is missing');
+    if (!canManageTenant(req.auth)) {
+        return res.status(403).json({ error: 'Only organization owners and admins can manage billing.' });
+    }
     const organizationId = getWorkspaceId(req.auth);
     const stripe = getStripe();
     const priceId = process.env[`STRIPE_${parsed.data.plan}_PRICE_ID`];

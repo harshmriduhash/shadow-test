@@ -81,7 +81,7 @@ export interface Simulation {
     projectId: string;
     personaId: string;
     task: string;
-    status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+    status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
     createdAt: string;
     project?: Pick<Project, 'id' | 'name'>;
     persona?: Persona;
@@ -201,6 +201,13 @@ export const api = {
             fetcher<Simulation>('/simulations/start', { ...options, method: 'POST', body: JSON.stringify(data) }),
         retry: (id: string, options?: RequestInit) =>
             fetcher<Simulation>(`/simulations/${encodeURIComponent(id)}/retry`, { ...options, method: 'POST' }),
+        cancel: (id: string, options?: RequestInit) =>
+            fetcher<{ id: string; status: string }>(`/simulations/${encodeURIComponent(id)}/cancel`, { ...options, method: 'POST' }),
+        progressTicket: (id: string, options?: RequestInit) =>
+            fetcher<{ ticket: string; expiresInSeconds: number }>(
+                `/simulations/${encodeURIComponent(id)}/progress-ticket`,
+                { ...options, method: 'POST' }
+            ),
         getSteps: (id: string, options?: RequestInit) =>
             fetcher<SimulationStep[]>(`/simulations/${encodeURIComponent(id)}/steps`, options),
     },
@@ -265,3 +272,30 @@ export const api = {
             fetcher<{ url: string }>('/billing/checkout', { ...options, method: 'POST', body: JSON.stringify({ plan }) }),
     }
 };
+
+export async function connectSimulationProgress(
+    simulationId: string,
+    options: RequestInit,
+    onProgress: (event: { type: string; status?: string; step?: SimulationStep }) => void
+) {
+    const { ticket } = await api.simulations.progressTicket(simulationId, options);
+    const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://shadowtest-api.onrender.com/api';
+    const apiUrl = new URL(configuredApiUrl, window.location.origin);
+    const basePath = apiUrl.pathname.replace(/\/+$/, '').replace(/\/api(?:\/v1)?$/i, '');
+    apiUrl.protocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    apiUrl.pathname = `${basePath}/api/v1/simulations/${encodeURIComponent(simulationId)}/progress`;
+    apiUrl.search = new URLSearchParams({ ticket }).toString();
+
+    const socket = new WebSocket(apiUrl);
+    socket.addEventListener('message', message => {
+        try {
+            const event: unknown = JSON.parse(String(message.data));
+            if (typeof event === 'object' && event !== null && 'type' in event && typeof event.type === 'string') {
+                onProgress(event as { type: string; status?: string; step?: SimulationStep });
+            }
+        } catch (error) {
+            console.error('Received invalid simulation progress data:', error);
+        }
+    });
+    return () => socket.close();
+}

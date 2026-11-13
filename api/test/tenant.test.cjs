@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+    canManageTenant,
     canManageTenantProject,
+    canRunTenantSimulation,
     ensureWorkspace,
     getWorkspaceId,
     projectScopeWhere
@@ -68,6 +70,27 @@ test('organization project management requires a verified owner or admin role', 
         ),
         false
     );
+});
+
+test('workspace roles expose least-privilege management and simulation capabilities', () => {
+    const roles = {
+        'org:owner': { manage: true, run: true },
+        'org:admin': { manage: true, run: true },
+        'org:member': { manage: false, run: true },
+        'org:viewer': { manage: false, run: false }
+    };
+    for (const [organizationRole, expected] of Object.entries(roles)) {
+        const identity = { userId: 'user_123', organizationId: 'org_456', organizationRole };
+        assert.equal(canManageTenant(identity), expected.manage, `${organizationRole} manage`);
+        assert.equal(canRunTenantSimulation(identity), expected.run, `${organizationRole} run`);
+    }
+    assert.equal(canManageTenant({ userId: 'personal_user' }), true);
+    assert.equal(canRunTenantSimulation({ userId: 'personal_user' }), true);
+    assert.equal(canRunTenantSimulation({
+        userId: 'user_123',
+        organizationId: 'org_456',
+        organizationRole: 'org:unknown'
+    }), false);
 });
 
 test('workspace synchronization persists organization membership from verified identity claims', async () => {

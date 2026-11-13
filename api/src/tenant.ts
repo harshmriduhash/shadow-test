@@ -22,7 +22,19 @@ function membershipRole(identity: TenantIdentity): string {
     ) {
         return identity.organizationRole;
     }
-    return 'org:member';
+    return 'org:viewer';
+}
+
+export function getWorkspaceRole(identity: TenantIdentity): string {
+    return membershipRole(identity);
+}
+
+export function canRunTenantSimulation(identity: TenantIdentity): boolean {
+    return ['org:owner', 'org:admin', 'org:member'].includes(membershipRole(identity));
+}
+
+export function canManageTenant(identity: TenantIdentity): boolean {
+    return ['org:owner', 'org:admin'].includes(membershipRole(identity));
 }
 
 export function projectScopeWhere(organizationId: string) {

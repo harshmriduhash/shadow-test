@@ -26,6 +26,14 @@ services:
         value: 4000
       - key: NODE_ENV
         value: production
+      - key: API_RATE_LIMIT_PER_MINUTE
+        value: 120
+      - key: API_RATE_LIMIT_UNAUTHENTICATED_PER_IP_PER_MINUTE
+        value: 20
+      - key: API_RATE_LIMIT_PER_USER_ORG_PER_MINUTE
+        value: 100
+      - key: MAX_ACTIVE_SIMULATIONS_PER_ORG
+        value: 2
       - fromGroup: shadowtest-shared
       - key: POSTGRES_PRISMA_URL
         sync: false
@@ -129,6 +137,8 @@ services:
         sync: false
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-5-5
+      - key: SIMULATION_WORKER_CONCURRENCY
+        value: 2
       - key: AWS_REGION
         value: us-east-1
       - key: AWS_S3_BUCKET

@@ -5,9 +5,12 @@ import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { randomUUID } from 'node:crypto';
 import { requireInternalAuth, requireSession } from './security';
-import { canManageTenantProject, ensureWorkspace, getWorkspaceId, projectScopeWhere as tenantProjectScopeWhere } from './tenant';
+import { canManageTenantProject, canRunTenantSimulation, ensureWorkspace, getWorkspaceId, projectScopeWhere as tenantProjectScopeWhere } from './tenant';
 import { dashboardSearchSchema, documentSearchSchema, documentStatusSchema, documentUploadSchema, paginationSchema, personaCreateSchema, personaUpdateSchema, projectCreateSchema, projectUpdateSchema, reportShareCreateSchema, simulationReportSchema, simulationStartSchema, simulationStatusSchema, simulationStepSchema } from './schemas';
 import { createSimulationWithinQuota, getPlanUsage, releaseSimulationUsage } from './plans';
+import { enqueueSimulation, getSimulationQueue } from './simulation-queue';
+import { createProgressTicket, publishSimulationProgress } from './simulation-progress';
+import { tenantRateLimit, unauthenticatedIpRateLimit } from './tenant-rate-limit';
 import { cursorArgs, cursorPage } from './pagination';
 import { createReportShareToken, hashReportShareToken, isReportShareToken, reportShareExpiry } from './report-sharing';
 
@@ -122,6 +125,57 @@ async function dispatchSimulation(
     return simulation;
 }
 
+async function enqueueSimulationRun(
+    simulation: { id: string; createdAt: Date },
+    organizationId: string,
+    project: { id: string; productUrl: string | null; repoUrl: string | null; description: string | null },
+    persona: {
+        id: string;
+        traits: string;
+        technicalKnowledge: number;
+        patience: number;
+        decisionSpeed: number;
+        riskTolerance: number;
+        attentionToDetail: number;
+    },
+    task: string
+) {
+    if (!process.env.REDIS_URL) {
+        if (process.env.NODE_ENV === 'production') {
+            throw new SimulationServiceError('The durable simulation queue is not configured', 503);
+        }
+        return dispatchSimulation(simulation.id, project, persona, task);
+    }
+
+    await enqueueSimulation({
+        simulationId: simulation.id,
+        organizationId,
+        periodStart: new Date(Date.UTC(
+            simulation.createdAt.getUTCFullYear(),
+            simulation.createdAt.getUTCMonth(),
+            1
+        )).toISOString(),
+        request: {
+            project_id: project.id,
+            project_description: project.description,
+            persona_id: persona.id,
+            task,
+            simulation_id: simulation.id,
+            product_url: project.productUrl,
+            repo_url: project.repoUrl,
+            persona_traits: persona.traits,
+            persona_profile: {
+                technical_knowledge: persona.technicalKnowledge,
+                patience: persona.patience,
+                decision_speed: persona.decisionSpeed,
+                risk_tolerance: persona.riskTolerance,
+                attention_to_detail: persona.attentionToDetail
+            }
+        }
+    });
+    return simulation;
+}
+
 async function validateProjectSources(productUrl?: string, repoUrl?: string) {
     if (productUrl) {
         const internalApiKey = process.env.INTERNAL_API_KEY;
@@ -173,10 +227,43 @@ router.patch('/simulations/:id', requireInternalAuth, asyncHandler(async (req, r
     const parsed = simulationStatusSchema.safeParse(req.body);
     if (!parsed.success) return invalid(res, 'Invalid simulation status', parsed.error.issues);
 
-    const simulation = await prisma.simulation.update({
-        where: { id: routeParam(req, 'id') },
-        data: { status: parsed.data.status }
-    });
+    const simulationId = routeParam(req, 'id');
+    let simulation;
+    if (parsed.data.status === 'FAILED' || parsed.data.status === 'CANCELLED') {
+        const owner = await prisma.simulation.findUnique({
+            where: { id: simulationId },
+            select: { createdAt: true, project: { select: { organizationId: true } } }
+        });
+        if (!owner) return res.status(404).json({ error: 'Simulation not found' });
+        const periodStart = new Date(Date.UTC(
+            owner.createdAt.getUTCFullYear(),
+            owner.createdAt.getUTCMonth(),
+            1
+        ));
+        await releaseSimulationUsage(
+            prisma,
+            simulationId,
+            owner.project.organizationId,
+            periodStart,
+            parsed.data.status
+        );
+        simulation = await prisma.simulation.findUniqueOrThrow({ where: { id: simulationId } });
+    } else {
+        const allowedPreviousStatuses = parsed.data.status === 'RUNNING' ? ['PENDING', 'RUNNING'] : ['RUNNING'];
+        const transition = await prisma.simulation.updateMany({
+            where: { id: simulationId, status: { in: allowedPreviousStatuses } },
+            data: { status: parsed.data.status }
+        });
+        if (transition.count === 0) {
+            const existing = await prisma.simulation.findUnique({ where: { id: simulationId } });
+            if (!existing) return res.status(404).json({ error: 'Simulation not found' });
+            if (existing.status !== parsed.data.status) {
+                return res.status(409).json({ error: `Cannot transition simulation from ${existing.status} to ${parsed.data.status}.` });
+            }
+        }
+        simulation = await prisma.simulation.findUniqueOrThrow({ where: { id: simulationId } });
+    }
+    await publishSimulationProgress(simulationId, { type: 'simulation.status', status: simulation.status });
     res.json(simulation);
 }));
 
@@ -198,6 +285,7 @@ router.post('/simulations/:id/steps', requireInternalAuth, asyncHandler(async (r
     const savedStep = await prisma.simulationStep.create({
         data: { simulationId: routeParam(req, 'id'), stepNumber, ...step }
     });
+    await publishSimulationProgress(savedStep.simulationId, { type: 'simulation.step', step: savedStep });
     res.status(201).json(savedStep);
 }));
 
@@ -247,7 +335,7 @@ router.post('/simulations/:id/report', requireInternalAuth, asyncHandler(async (
     res.status(201).json(report);
 }));
 
-router.post('/public/reports', asyncHandler(async (req, res) => {
+router.post('/public/reports', unauthenticatedIpRateLimit, asyncHandler(async (req, res) => {
     const token = typeof req.body?.token === 'string' ? req.body.token : '';
     res.set('Cache-Control', 'no-store');
     res.set('X-Robots-Tag', 'noindex, nofollow');
@@ -279,6 +367,7 @@ router.post('/public/reports', asyncHandler(async (req, res) => {
 }));
 
 router.use(requireSession);
+router.use(tenantRateLimit);
 
 router.get('/search', asyncHandler(async (req, res) => {
     const parsed = dashboardSearchSchema.safeParse(req.query);
@@ -335,12 +424,13 @@ router.get('/workspace/access', asyncHandler(async (req, res) => {
     const canManage = isPersonal
         || req.auth?.organizationRole === 'org:admin'
         || req.auth?.organizationRole === 'org:owner';
+    const role = isPersonal ? 'org:owner' : req.auth?.organizationRole || 'org:member';
     res.json({
         organizationId,
-        role: isPersonal ? 'org:owner' : req.auth?.organizationRole || 'org:member',
+        role,
         capabilities: {
             viewProjects: true,
-            runSimulations: true,
+            runSimulations: canRunTenantSimulation(req.auth),
             manageProjectsAndPersonas: canManage,
             manageDocuments: canManage
         }
@@ -460,9 +550,11 @@ router.post('/projects/:projectId/documents/:documentId/complete', asyncHandler(
             id: routeParam(req, 'documentId'),
             projectId: routeParam(req, 'projectId'),
             project: projectScopeWhere(req)
-        }
+        },
+        include: { project: { select: { userId: true, organizationId: true } } }
     });
     if (!document) return res.status(404).json({ error: 'Document not found' });
+    if (!canManageProject(req, document.project)) return res.status(403).json({ error: 'Only project owners and organization admins can complete document uploads.' });
     if (document.status !== 'UPLOADING') return res.status(409).json({ error: 'Document upload has already been completed' });
 
     const storage = getS3Config();
@@ -582,6 +674,9 @@ router.post('/projects', asyncHandler(async (req, res) => {
 
     const userId = await ensureUser(req);
     if (!req.auth) throw new Error('Authenticated user context is missing');
+    if (!canManageProject(req, { userId, organizationId: getWorkspaceId(req.auth) })) {
+        return res.status(403).json({ error: 'Only project owners and organization admins can create projects.' });
+    }
     const organizationId = getWorkspaceId(req.auth);
     const { productUrl, repoUrl, ...projectData } = parsed.data;
     const creation = await prisma.$transaction(async transaction => {
@@ -895,11 +990,35 @@ router.get('/simulations/:id/steps', asyncHandler(async (req, res) => {
     res.json(steps);
 }));
 
+router.post('/simulations/:id/progress-ticket', asyncHandler(async (req, res) => {
+    await ensureUser(req);
+    const simulationId = routeParam(req, 'id');
+    const simulation = await prisma.simulation.findFirst({
+        where: { id: simulationId, project: projectScopeWhere(req) },
+        select: { id: true }
+    });
+    if (!simulation || !req.auth) return res.status(404).json({ error: 'Simulation not found' });
+    const ticket = await createProgressTicket({
+        simulationId,
+        organizationId: getWorkspaceId(req.auth),
+        userId: req.auth.userId
+    });
+    res.status(201).json({ ticket, expiresInSeconds: 30 });
+}));
+
 router.post('/simulations/start', asyncHandler(async (req, res) => {
     const parsed = simulationStartSchema.safeParse(req.body);
     if (!parsed.success) return invalid(res, 'Invalid simulation request', parsed.error.issues);
+    const idempotencyKey = req.header('idempotency-key');
+    if (idempotencyKey && !/^[A-Za-z0-9._:-]{1,128}$/.test(idempotencyKey)) {
+        return res.status(400).json({ error: 'Idempotency-Key must be 1-128 safe characters.' });
+    }
 
     await ensureUser(req);
+    if (!req.auth) throw new Error('Authenticated user context is missing');
+    if (!canRunTenantSimulation(req.auth)) {
+        return res.status(403).json({ error: 'Your organization role does not allow running simulations.' });
+    }
     const project = await prisma.project.findFirst({
         where: { id: parsed.data.projectId, ...projectScopeWhere(req) },
         select: { id: true, productUrl: true, repoUrl: true, description: true }
@@ -915,18 +1034,29 @@ router.post('/simulations/start', asyncHandler(async (req, res) => {
     const organizationId = getWorkspaceId(req.auth);
     const creation = await createSimulationWithinQuota(prisma, organizationId, {
         ...parsed.data,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
         status: 'PENDING'
     });
     if (!creation.reserved) {
+        if (creation.rejection === 'concurrency_limit') {
+            res.setHeader('Retry-After', '30');
+            return res.status(429).json({ error: 'Your organization already has the maximum number of active simulations.' });
+        }
         return res.status(403).json({ error: `You have reached the ${creation.limits.simulationsPerMonth} simulation monthly limit for your ${creation.plan} plan.` });
     }
     const simulation = creation.simulation;
+    if (creation.deduplicated) return res.status(200).json(simulation);
     try {
-        const started = await dispatchSimulation(simulation.id, project, persona, parsed.data.task);
+        const started = await enqueueSimulationRun(
+            simulation,
+            organizationId,
+            project,
+            persona,
+            parsed.data.task
+        );
         res.status(202).json(started);
     } catch (error) {
-        await prisma.simulation.update({ where: { id: simulation.id }, data: { status: 'FAILED' } });
-        await releaseSimulationUsage(prisma, organizationId, creation.periodStart);
+        await releaseSimulationUsage(prisma, simulation.id, organizationId, creation.periodStart);
         console.error(`Failed to contact simulation service for ${simulation.id}:`, error);
         const statusCode = error instanceof SimulationServiceError ? error.statusCode : 502;
         const message = error instanceof SimulationServiceError
@@ -939,6 +1069,9 @@ router.post('/simulations/start', asyncHandler(async (req, res) => {
 router.post('/simulations/:id/retry', asyncHandler(async (req, res) => {
     await ensureUser(req);
     if (!req.auth) throw new Error('Authenticated user context is missing');
+    if (!canRunTenantSimulation(req.auth)) {
+        return res.status(403).json({ error: 'Your organization role does not allow running simulations.' });
+    }
     const previous = await prisma.simulation.findFirst({
         where: { id: routeParam(req, 'id'), status: 'FAILED', project: projectScopeWhere(req) },
         include: { project: true, persona: true }
@@ -953,15 +1086,24 @@ router.post('/simulations/:id/retry', asyncHandler(async (req, res) => {
         status: 'PENDING'
     });
     if (!creation.reserved) {
+        if (creation.rejection === 'concurrency_limit') {
+            res.setHeader('Retry-After', '30');
+            return res.status(429).json({ error: 'Your organization already has the maximum number of active simulations.' });
+        }
         return res.status(403).json({ error: `You have reached the ${creation.limits.simulationsPerMonth} simulation monthly limit for your ${creation.plan} plan.` });
     }
     const retry = creation.simulation;
     try {
-        const started = await dispatchSimulation(retry.id, previous.project, previous.persona, retry.task);
+        const started = await enqueueSimulationRun(
+            retry,
+            organizationId,
+            previous.project,
+            previous.persona,
+            retry.task
+        );
         res.status(202).json(started);
     } catch (error) {
-        await prisma.simulation.update({ where: { id: retry.id }, data: { status: 'FAILED' } });
-        await releaseSimulationUsage(prisma, organizationId, creation.periodStart);
+        await releaseSimulationUsage(prisma, retry.id, organizationId, creation.periodStart);
         console.error(`Failed to retry simulation ${previous.id}:`, error);
         const statusCode = error instanceof SimulationServiceError ? error.statusCode : 502;
         const message = error instanceof SimulationServiceError
@@ -969,6 +1111,69 @@ router.post('/simulations/:id/retry', asyncHandler(async (req, res) => {
             : 'Unable to reach the simulation service. Retry the simulation.';
         res.status(statusCode).json({ error: message });
     }
+}));
+
+router.post('/simulations/:id/cancel', asyncHandler(async (req, res) => {
+    await ensureUser(req);
+    if (!req.auth) throw new Error('Authenticated user context is missing');
+    if (!canRunTenantSimulation(req.auth)) {
+        return res.status(403).json({ error: 'Your organization role does not allow canceling simulations.' });
+    }
+
+    const simulation = await prisma.simulation.findFirst({
+        where: { id: routeParam(req, 'id'), project: projectScopeWhere(req) },
+        select: {
+            id: true,
+            status: true,
+            createdAt: true,
+            project: { select: { organizationId: true } }
+        }
+    });
+    if (!simulation) return res.status(404).json({ error: 'Simulation not found' });
+    if (!['PENDING', 'RUNNING'].includes(simulation.status)) {
+        return res.status(409).json({ error: `Cannot cancel a ${simulation.status.toLowerCase()} simulation.` });
+    }
+
+    const queue = process.env.REDIS_URL ? getSimulationQueue() : undefined;
+    const job = queue ? await queue.getJob(`simulation-${simulation.id}`) : undefined;
+    const state = job ? await job.getState() : undefined;
+    if (job && state && ['waiting', 'delayed', 'paused', 'waiting-children'].includes(state)) {
+        try {
+            await job.remove();
+            const periodStart = new Date(Date.UTC(
+                simulation.createdAt.getUTCFullYear(),
+                simulation.createdAt.getUTCMonth(),
+                1
+            ));
+            await releaseSimulationUsage(
+                prisma,
+                simulation.id,
+                simulation.project.organizationId,
+                periodStart,
+                'CANCELLED'
+            );
+            await publishSimulationProgress(simulation.id, { type: 'simulation.status', status: 'CANCELLED' });
+            return res.json({ id: simulation.id, status: 'CANCELLED' });
+        } catch (error) {
+            console.info(`Simulation ${simulation.id} became active while cancellation was requested:`, error);
+        }
+    }
+
+    const internalApiKey = process.env.INTERNAL_API_KEY;
+    if (!internalApiKey) return res.status(503).json({ error: 'Simulation cancellation is not configured.' });
+    let response: globalThis.Response;
+    try {
+        response = await fetch(`${AI_ENGINE_URL}/simulate/${encodeURIComponent(simulation.id)}/cancel`, {
+            method: 'POST',
+            headers: { 'X-Internal-Api-Key': internalApiKey },
+            signal: AbortSignal.timeout(10_000)
+        });
+    } catch (error) {
+        console.error(`Unable to request cancellation for simulation ${simulation.id}:`, error);
+        return res.status(503).json({ error: 'Simulation cancellation is temporarily unavailable.' });
+    }
+    if (!response.ok) return res.status(503).json({ error: 'Simulation cancellation is temporarily unavailable.' });
+    return res.status(202).json({ id: simulation.id, status: 'CANCELLATION_REQUESTED' });
 }));
 
 export default router;

@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+process.env.REDIS_URL = '';
 const { app } = require('../dist/index.js');
 
 let server;

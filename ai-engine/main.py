@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 import aiohttp
 import anthropic
 import httpx
+from bullmq import Queue
 from redis.asyncio import Redis
 from bs4 import BeautifulSoup
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
@@ -37,8 +38,9 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 MAX_PAGE_BYTES = 1_000_000
 MAX_SIMULATION_STEPS = 5
-QUEUE_KEY = "shadowtest:simulations:pending"
+QUEUE_NAME = "shadowtest-jobs"
 redis_client: Optional[Redis] = None
+bull_queue: Optional[Queue] = None
 
 
 class PersonaProfile(BaseModel):
@@ -83,6 +85,14 @@ class PageContext(BaseModel):
     text: str
     links: list[dict[str, str]]
     controls: list[dict[str, str]] = Field(default_factory=list)
+
+
+@app.on_event("shutdown")
+async def close_service_clients() -> None:
+    if bull_queue is not None:
+        await bull_queue.close()
+    if redis_client is not None:
+        await redis_client.aclose()
 
 
 def parse_public_https_url(url: str):
@@ -385,6 +395,24 @@ async def send_internal_request(path: str, payload: dict[str, Any]) -> None:
     response.raise_for_status()
 
 
+async def simulation_is_cancelled(simulation_id: str) -> bool:
+    if not REDIS_URL:
+        return False
+    global redis_client
+    if redis_client is None:
+        redis_client = Redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=5)
+    return bool(await redis_client.exists(f"shadowtest:simulation:cancel:{simulation_id}"))
+
+
+async def request_simulation_cancel(simulation_id: str) -> None:
+    if not REDIS_URL:
+        raise HTTPException(status_code=503, detail="Simulation cancellation is not configured")
+    global redis_client
+    if redis_client is None:
+        redis_client = Redis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=5)
+    await redis_client.set(f"shadowtest:simulation:cancel:{simulation_id}", "1", ex=3600)
+
+
 async def update_simulation_status(simulation_id: str, status: str) -> None:
     if not INTERNAL_API_KEY:
         raise RuntimeError("INTERNAL_API_KEY is not configured")
@@ -400,17 +428,21 @@ async def update_simulation_status(simulation_id: str, status: str) -> None:
 async def enqueue_simulation(request: SimulationRequest) -> bool:
     if not REDIS_URL:
         return False
-    global redis_client
-    if redis_client is None:
-        redis_client = Redis.from_url(
-            REDIS_URL,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-        )
+    global bull_queue
+    if bull_queue is None:
+        bull_queue = Queue(QUEUE_NAME, {"connection": REDIS_URL})
     try:
-        await redis_client.ping()
-        await redis_client.rpush(QUEUE_KEY, request.model_dump_json())
+        await bull_queue.add(
+            "simulation",
+            {"request": request.model_dump(mode="json")},
+            {
+                "jobId": f"simulation-{request.simulation_id}",
+                "attempts": 3,
+                "backoff": {"type": "exponential", "delay": 3000},
+                "removeOnComplete": 1000,
+                "removeOnFail": 5000,
+            },
+        )
     except Exception as error:
         print(f"Unable to enqueue simulation {request.simulation_id}: {error}")
         raise HTTPException(status_code=503, detail="Simulation queue is temporarily unavailable") from error
@@ -420,19 +452,20 @@ async def enqueue_simulation(request: SimulationRequest) -> bool:
 async def enqueue_document_index(request: DocumentIndexRequest) -> bool:
     if not REDIS_URL:
         return False
-    global redis_client
-    if redis_client is None:
-        redis_client = Redis.from_url(
-            REDIS_URL,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-        )
+    global bull_queue
+    if bull_queue is None:
+        bull_queue = Queue(QUEUE_NAME, {"connection": REDIS_URL})
     try:
-        await redis_client.ping()
-        await redis_client.rpush(
-            QUEUE_KEY,
-            json.dumps({"job_type": "document_index", "document": request.model_dump()}),
+        await bull_queue.add(
+            "document_index",
+            {"document": request.model_dump(mode="json")},
+            {
+                "jobId": f"document-{request.document_id}",
+                "attempts": 3,
+                "backoff": {"type": "exponential", "delay": 3000},
+                "removeOnComplete": 1000,
+                "removeOnFail": 5000,
+            },
         )
     except Exception as error:
         print(f"Unable to enqueue document {request.document_id}: {error}")
@@ -471,11 +504,15 @@ async def process_document_job(payload: dict[str, Any]) -> None:
             )
         except Exception as status_error:
             print(f"Could not record document indexing failure for {document_id}: {status_error}")
+        raise
 
 
-async def run_simulation_loop(request: SimulationRequest) -> None:
+async def run_simulation_loop(request: SimulationRequest, mark_failure: bool = True) -> None:
     browser: Optional[SafeBrowserSession] = None
     try:
+        if await simulation_is_cancelled(request.simulation_id):
+            await update_simulation_status(request.simulation_id, "CANCELLED")
+            return
         if not ANTHROPIC_API_KEY:
             raise RuntimeError("ANTHROPIC_API_KEY is not configured")
         await update_simulation_status(request.simulation_id, "RUNNING")
@@ -501,6 +538,9 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
         task_success: Optional[bool] = None
 
         for step_number in range(1, MAX_SIMULATION_STEPS + 1):
+            if await simulation_is_cancelled(request.simulation_id):
+                await update_simulation_status(request.simulation_id, "CANCELLED")
+                return
             evidence_sources = [
                 page.text if page else "",
                 *(step.get("observation", "") for step in steps),
@@ -514,6 +554,9 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
                 readme,
                 project_documents,
             )
+            if await simulation_is_cancelled(request.simulation_id):
+                await update_simulation_status(request.simulation_id, "CANCELLED")
+                return
             next_link_index = result.get("next_link_index")
             next_control_index = result.get("next_control_index")
             if next_link_index is not None and next_control_index is not None:
@@ -623,6 +666,9 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
                 "evidence": steps[-1]["outcome"][:2000],
             })
 
+        if await simulation_is_cancelled(request.simulation_id):
+            await update_simulation_status(request.simulation_id, "CANCELLED")
+            return
         await send_internal_request(
             f"/simulations/{request.simulation_id}/report",
             {"summary": summary, "insights": insights, "success": completed, "events": ux_events[:50]},
@@ -630,10 +676,13 @@ async def run_simulation_loop(request: SimulationRequest) -> None:
         await update_simulation_status(request.simulation_id, "COMPLETED")
     except Exception as error:
         print(f"Simulation {request.simulation_id} failed: {error}")
-        try:
-            await update_simulation_status(request.simulation_id, "FAILED")
-        except Exception as status_error:
-            print(f"Could not record failure status for {request.simulation_id}: {status_error}")
+        if mark_failure:
+            try:
+                await update_simulation_status(request.simulation_id, "FAILED")
+            except Exception as status_error:
+                print(f"Could not record failure status for {request.simulation_id}: {status_error}")
+        else:
+            raise
     finally:
         if browser is not None:
             try:
@@ -739,6 +788,16 @@ async def start_simulation(
         raise HTTPException(status_code=503, detail="REDIS_URL is required in production")
     background_tasks.add_task(run_simulation_loop, request)
     return {"status": "started", "simulation_id": request.simulation_id}
+
+
+@app.post("/simulate/{simulation_id}/cancel", status_code=202)
+async def cancel_simulation(
+    simulation_id: str,
+    x_internal_api_key: Optional[str] = Header(default=None),
+):
+    validate_request_internal_key(x_internal_api_key)
+    await request_simulation_cancel(simulation_id)
+    return {"status": "cancellation_requested", "simulation_id": simulation_id}
 
 
 @app.post("/documents/index", status_code=202)
